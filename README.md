@@ -1,4 +1,4 @@
-# Ag Local Bridge
+# AG Local Bridge
 
 **Exposes your running [Antigravity](https://codeium.com/antigravity) instance as a local OpenAI-compatible API** on `localhost:11435`.
 
@@ -149,7 +149,7 @@ The extension uses a 3-tier fallback strategy:
 ## Requirements
 
 - [Antigravity](https://codeium.com/antigravity) installed and running
-- Active Antigravity subscription (Pro/Teams/Enterprise)
+- Active Antigravity subscription (Free/Pro/Teams/Enterprise)
 
 ## License
 
