@@ -1,0 +1,15 @@
+# Source control & dev tooling
+.git/**
+.gitignore
+.vscode-test/**
+node_modules/**
+
+# Build artifacts
+*.vsix
+
+# Dev/design assets (large files not needed at runtime)
+logo.png
+bridge-debug.log
+
+# Docs already shown on Marketplace from README
+CHANGELOG.md

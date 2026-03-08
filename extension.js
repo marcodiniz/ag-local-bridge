@@ -38,10 +38,10 @@ const MAX_QUEUE_WAIT_MS = 60000;
 
 // Rate limiting / loop-breaking
 let lastResponseTimestamp = 0;
-const MIN_REQUEST_INTERVAL_MS = 5000; // 5s cooldown between responses
+const MIN_REQUEST_INTERVAL_MS = 1000; // 1s cooldown between responses
 let lastUserMessageHash = '';
 let lastUserMessageTimestamp = 0;
-const DEDUP_WINDOW_MS = 30000; // 30s dedup window
+const DEDUP_WINDOW_MS = 5000; // 5s dedup window
 
 // CSRF token intercepted from Antigravity's own outgoing requests
 let interceptedCsrf = null;
@@ -64,20 +64,28 @@ const MODEL_MAP = {
 };
 const DEFAULT_MODEL_KEY = 'antigravity-claude-sonnet-4-6';
 
-/** Extract text from OpenAI message content (handles both string and content-parts array) */
+/** Extract text from OpenAI message content (handles both string and content-parts array).
+ *  Skips image_url parts — those are handled separately by extractImages(). */
 function extractText(content) {
     if (!content) return '';
     if (typeof content === 'string') return content;
     if (Array.isArray(content)) {
         return content
+            .filter(p => {
+                // Skip image parts — they're handled by extractImages()
+                if (p && typeof p === 'object' && p.type === 'image_url') return false;
+                return true;
+            })
             .map(p => {
                 if (typeof p === 'string') return p;
                 if (p && typeof p === 'object') {
+                    if (p.type === 'text' && p.text) return p.text;
                     if (p.text) return p.text;
                     try { return JSON.stringify(p); } catch { return ''; }
                 }
                 return String(p);
             })
+            .filter(t => t.length > 0)
             .join('\n');
     }
     if (typeof content === 'object') {
@@ -85,6 +93,108 @@ function extractText(content) {
         try { return JSON.stringify(content); } catch { return ''; }
     }
     return String(content || '');
+}
+
+/**
+ * Extract images from OpenAI message content-parts array.
+ * Supports:
+ *   - data:image/png;base64,... URLs (inline base64)
+ *   - https://... URLs (fetched and converted to base64)
+ *   - file:///... URIs (read from disk)
+ *
+ * Returns array of sidecar ImageData objects: { base64Data, mimeType }
+ * (JSON field names use camelCase for ConnectRPC JSON mapping)
+ */
+function extractImages(content) {
+    if (!content || !Array.isArray(content)) return [];
+    const images = [];
+    for (const part of content) {
+        if (!part || typeof part !== 'object' || part.type !== 'image_url') continue;
+        const urlObj = part.image_url;
+        if (!urlObj || !urlObj.url) continue;
+        const url = urlObj.url;
+
+        if (url.startsWith('data:')) {
+            // data:image/png;base64,iVBOR...
+            const match = url.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+            if (match) {
+                images.push({ base64Data: match[2], mimeType: match[1] });
+            }
+        } else if (url.startsWith('file:///') || url.startsWith('file:\\\\')) {
+            // Local file URI — read from disk
+            try {
+                const filePath = url.startsWith('file:///')
+                    ? url.slice(8).replace(/\//g, path.sep)  // file:///C:/foo → C:\foo
+                    : url.slice(8);
+                const data = fs.readFileSync(filePath);
+                const ext = path.extname(filePath).toLowerCase();
+                const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp' };
+                images.push({ base64Data: data.toString('base64'), mimeType: mimeMap[ext] || 'image/png' });
+            } catch (e) {
+                if (outputChannel) outputChannel.appendLine(`⚠️ Failed to read image file: ${e.message}`);
+            }
+        } else if (url.startsWith('http://') || url.startsWith('https://')) {
+            // Remote URL — will be fetched asynchronously later
+            images.push({ remoteUrl: url });
+        }
+    }
+    return images;
+}
+
+/**
+ * Extract all images from all messages in a conversation.
+ * Returns array of ImageData objects ready for the sidecar.
+ */
+async function extractAllImages(messages) {
+    const allImages = [];
+    for (const msg of messages) {
+        if (msg.role !== 'user') continue;
+        const images = extractImages(msg.content);
+        for (const img of images) {
+            if (img.remoteUrl) {
+                // Fetch remote image
+                try {
+                    const fetched = await fetchImageAsBase64(img.remoteUrl);
+                    if (fetched) allImages.push(fetched);
+                } catch (e) {
+                    if (outputChannel) outputChannel.appendLine(`⚠️ Failed to fetch remote image: ${e.message}`);
+                }
+            } else {
+                allImages.push(img);
+            }
+        }
+    }
+    return allImages;
+}
+
+/**
+ * Fetch a remote image URL and return as { base64Data, mimeType }.
+ * Uses Node's built-in https/http modules.
+ */
+function fetchImageAsBase64(url) {
+    return new Promise((resolve, reject) => {
+        const mod = url.startsWith('https') ? https : http;
+        const req = mod.get(url, { timeout: 15000 }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                // Follow redirect
+                return fetchImageAsBase64(res.headers.location).then(resolve, reject);
+            }
+            if (res.statusCode !== 200) {
+                return reject(new Error(`HTTP ${res.statusCode} fetching image`));
+            }
+            const chunks = [];
+            res.on('data', (d) => chunks.push(d));
+            res.on('end', () => {
+                const buf = Buffer.concat(chunks);
+                const contentType = res.headers['content-type'] || 'image/png';
+                const mimeType = contentType.split(';')[0].trim();
+                resolve({ base64Data: buf.toString('base64'), mimeType });
+            });
+            res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Image fetch timeout')); });
+    });
 }
 
 function resolveModel(requestedModel) {
@@ -199,8 +309,8 @@ function installH2Interceptor() {
                                         const fullPayload = Buffer.concat(chunks);
                                         capturedPayloads.push({
                                             ts: Date.now(), method, contentType: ct,
-                                            payloadHex: fullPayload.toString('hex').substring(0, 2000),
-                                            payloadUtf8: fullPayload.toString('utf8').substring(0, 500),
+                                            payloadHex: fullPayload.toString('hex').substring(0, 10000),
+                                            payloadUtf8: fullPayload.toString('utf8').substring(0, 5000),
                                             payloadLen: fullPayload.length
                                         });
                                         if (capturedPayloads.length > MAX_CAPTURES) capturedPayloads.shift();
@@ -307,6 +417,7 @@ async function handleRequest(req, res) {
     if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) return handleChatCompletions(req, res);
     if (req.method === 'GET' && url.pathname === '/v1/debug') return handleDebug(req, res);
     if (req.method === 'GET' && url.pathname === '/v1/captures') return sendJson(res, 200, { captures: capturedPayloads });
+    if (req.method === 'POST' && url.pathname === '/v1/proxy') return handleProxy(req, res);
 
     sendJson(res, 404, { error: { message: `Unknown: ${req.method} ${url.pathname}`, type: 'not_found' } });
 }
@@ -369,9 +480,9 @@ async function handleChatCompletions(req, res) {
         });
     }
 
-    // ── Duplicate detection: same user message within dedup window ──
-    const userMsgText = userTexts.join('\n').trim();
-    const msgHash = userMsgText.substring(0, 200);
+    // ── Duplicate detection: same LAST user message within dedup window ──
+    const lastUserMsg = userTexts.length > 0 ? userTexts[userTexts.length - 1].trim() : '';
+    const msgHash = lastUserMsg.substring(0, 500);
     if (msgHash === lastUserMessageHash && (now - lastUserMessageTimestamp) < DEDUP_WINDOW_MS) {
         log(`🛑 Duplicate message rejected (same message within ${DEDUP_WINDOW_MS / 1000}s)`);
         return sendJson(res, 429, {
@@ -387,14 +498,78 @@ async function handleChatCompletions(req, res) {
 
     // Resolve workspace directory: request body > header > VS Code workspace
     let workspaceDir = payload.workspace_dir || req.headers['x-workspace-dir'] || null;
+
+    if (!workspaceDir) {
+        try {
+            // Combine system and user text for keyword/path scanning
+            const sysMsgs = messages.filter(m => m.role === 'system').map(m => extractText(m.content)).join('\n');
+            const usrMsgs = messages.filter(m => m.role === 'user').map(m => extractText(m.content)).join('\n');
+            const allText = sysMsgs + '\n' + usrMsgs;
+
+            // 1. Look for explicit directory mentions from OpenCode/Cursor system prompt
+            const explicitMatch = allText.match(/(?:working in.*?directory|current workspace|workspace directory).*?([a-zA-Z]:\\[^\s"'>]+)/i);
+            if (explicitMatch) {
+                const candidate = explicitMatch[1].trim();
+                if (fs.existsSync(candidate)) {
+                    workspaceDir = candidate;
+                }
+            }
+
+            // 2. Look for .sln absolute paths (common in C# projects if passed in prompt)
+            if (!workspaceDir) {
+                const slnMatch = allText.match(/([a-zA-Z]:\\[^\s"'>]+\.sln)/i);
+                if (slnMatch && fs.existsSync(slnMatch[1])) {
+                    workspaceDir = path.dirname(slnMatch[1]);
+                }
+            }
+
+            // 3. Fallback: Score sibling directories by mentions in the text
+            if (!workspaceDir) {
+                const folders = vscode.workspace.workspaceFolders;
+                if (folders && folders.length > 0 && folders[0].uri.scheme === 'file') {
+                    const currentRoot = folders[0].uri.fsPath;
+                    const parentDir = path.dirname(currentRoot);
+                    if (fs.existsSync(parentDir)) {
+                        const siblings = fs.readdirSync(parentDir, { withFileTypes: true })
+                            .filter(d => d.isDirectory())
+                            .map(d => ({ path: path.join(parentDir, d.name), name: d.name }));
+
+                        let bestMatch = null;
+                        let bestScore = 0;
+                        for (const { path: p, name } of siblings) {
+                            if (name.length < 4) continue; // Ignore very short directory names
+
+                            // Only match whole words, case-insensitive
+                            const score = (allText.match(new RegExp(`\\b${name}\\b`, 'gi')) || []).length;
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestMatch = p;
+                            }
+                        }
+                        if (bestMatch && bestScore > 0) {
+                            workspaceDir = bestMatch;
+                            log(`📂 Guessed workspace from prompt keywords: ${workspaceDir}`);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            log(`⚠️ Workspace auto-detect failed: ${e.message}`);
+        }
+    }
+
     if (!workspaceDir) {
         const folders = vscode.workspace.workspaceFolders;
         if (folders && folders.length > 0 && folders[0].uri.scheme === 'file') {
             workspaceDir = folders[0].uri.fsPath;
         }
     }
+
+    // Convert to file:/// URI format (what the sidecar expects)
+    let workspaceUri = null;
     if (workspaceDir) {
-        log(`📂 Workspace dir: ${workspaceDir}`);
+        workspaceUri = 'file:///' + workspaceDir.replace(/\\/g, '/');
+        log(`📂 Workspace: ${workspaceDir} -> ${workspaceUri}`);
     } else {
         log(`⚠️ No workspace dir resolved — Antigravity may pick a random project`);
     }
@@ -418,7 +593,7 @@ async function handleChatCompletions(req, res) {
     chatRequestsInFlight++;
     log(`📡 Requests in flight: ${chatRequestsInFlight}`);
     try {
-        await _handleChatCompletionsInner(res, isStream, messages, completionId, resolved, workspaceDir);
+        await _handleChatCompletionsInner(res, isStream, messages, completionId, resolved, workspaceDir, workspaceUri);
     } finally {
         chatRequestsInFlight--;
         lastResponseTimestamp = Date.now();
@@ -430,10 +605,21 @@ async function handleChatCompletions(req, res) {
     }
 }
 
-async function _handleChatCompletionsInner(res, isStream, messages, completionId, resolved, workspaceDir) {
+async function _handleChatCompletionsInner(res, isStream, messages, completionId, resolved, workspaceDir, workspaceUri) {
+    // Extract images from OpenAI-format messages (base64 data URLs, remote URLs, file URIs)
+    let images = [];
+    try {
+        images = await extractAllImages(messages);
+        if (images.length > 0) {
+            log(`🖼️ Extracted ${images.length} image(s) from messages`);
+        }
+    } catch (e) {
+        log(`⚠️ Image extraction failed: ${e.message}`);
+    }
+
     // Tier 1: Direct sidecar ConnectRPC call
     try {
-        const result = await callSidecarChat(messages, resolved.value, workspaceDir);
+        const result = await callSidecarChat(messages, resolved.value, workspaceDir, workspaceUri, images);
         if (result) {
             if (isStream) {
                 setupStreamResponse(res);
@@ -472,6 +658,28 @@ async function _handleChatCompletionsInner(res, isStream, messages, completionId
     }
 
     sendJson(res, 503, { error: { message: 'All tiers failed. Run "Antigravity Bridge: Probe Sidecar" from Command Palette.', type: 'service_unavailable' } });
+}
+
+// ─────────────────────────────────────────────
+// POST /v1/proxy — forward RPC to sidecar
+// ─────────────────────────────────────────────
+
+async function handleProxy(req, res) {
+    const body = await readBody(req);
+    let payload;
+    try { payload = JSON.parse(body); } catch { return sendJson(res, 400, { error: 'Invalid JSON' }); }
+    const method = payload.method || 'GetStatus';
+    const rpcBody = payload.body || {};
+    const info = discoverSidecar();
+    if (!info) return sendJson(res, 503, { error: 'Sidecar not found' });
+    const lsPorts = info.actualPorts.filter(p => p !== info.extensionServerPort);
+    for (const port of lsPorts) {
+        try {
+            const result = await makeH2JsonCall(port, info.csrfTokens[0], info.certPath, method, rpcBody);
+            return sendJson(res, 200, result);
+        } catch (e) { /* try next port */ }
+    }
+    sendJson(res, 503, { error: 'No reachable LS port' });
 }
 
 // ─────────────────────────────────────────────
@@ -559,7 +767,21 @@ function discoverSidecar() {
  *  - plannerTypeConfig: { conversational: {} } = conversational cascade mode
  *  - items: [{ text: message }] = user message items array
  */
-async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null) {
+// Global Mutex for workspace switching
+let isWorkspaceSwitching = false;
+
+// Conversation Continuity
+const activeCascades = new Map(); // convKey -> { id, lastUsed }
+const cascadePromises = new Map(); // convKey -> Promise<string>
+
+function getConversationKey(messages, workspaceDir) {
+    const userMsgs = messages.filter(m => m.role === 'user').map(m => extractText(m.content));
+    const prefix = workspaceDir ? path.basename(workspaceDir) : 'default';
+    if (userMsgs.length === 0) return `${prefix}_system_${Date.now()}`;
+    return `${prefix}_${String(userMsgs[0]).substring(0, 50)}`;
+}
+
+async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null, workspaceUri = null, images = []) {
     const info = discoverSidecar();
     if (!info) throw new Error('Sidecar not discovered');
 
@@ -575,7 +797,9 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null)
         catch (e) { flog(`  port ${port} failed: ${e.message.substring(0, 40)}`); }
     }
     if (!lsPort) throw new Error('No reachable LS port');
-    flog(`  Using LS port: ${lsPort}`);
+
+    const convKey = getConversationKey(messages, workspaceDir);
+    let cascadeId = null;
 
     // Retry loop: start fresh cascade on each attempt (capacity errors leave error steps)
     const MAX_RETRIES = 3;
@@ -586,17 +810,86 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null)
             await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
         }
 
-        // Start a fresh cascade for each attempt
-        const startResult = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'StartCascade', {});
-        const cascadeId = startResult && startResult.cascadeId;
-        if (!cascadeId) throw new Error('StartCascade did not return a cascadeId');
-        flog(`  🆕 Cascade: ${cascadeId.substring(0, 8)} (attempt ${attempt + 1})`);
+        // --- CONVERSATION MULTIPLEXING ---
+        if (cascadePromises.has(convKey)) {
+            flog(`  ♻️ Awaiting concurrent cascade creation for conv: ${convKey.replace(/\n/g, '')}...`);
+            cascadeId = await cascadePromises.get(convKey);
+            flog(`  ♻️ Concurrently Reused cascade: ${cascadeId.substring(0, 8)}`);
+        } else if (activeCascades.has(convKey) && (Date.now() - activeCascades.get(convKey).lastUsed < 1000 * 60 * 60 * 4)) {
+            cascadeId = activeCascades.get(convKey).id;
+            activeCascades.get(convKey).lastUsed = Date.now();
+            flog(`  ♻️ Reused existing conversation: ${cascadeId.substring(0, 8)}`);
+        } else {
+            // Must create a new Cascade. Lock the workspace globally to prevent race conditions across parallel conversations!
+            const promise = (async () => {
+                while (isWorkspaceSwitching) await new Promise(r => setTimeout(r, 100));
+                isWorkspaceSwitching = true;
+                try {
+                    let originalFolders = null;
+                    if (workspaceDir) {
+                        const targetUri = vscode.Uri.file(workspaceDir);
+                        const currentFolders = vscode.workspace.workspaceFolders || [];
+                        const currentFsPaths = currentFolders.map(f => f.uri.fsPath);
 
-        // Send message — model:334 = Claude 4.5 Sonnet Thinking (verified working)
-        // Build conversational config, optionally with workspace override
+                        // Strict match ensures we drop "playground" if it's open alongside the target
+                        const isStrictMatch = currentFsPaths.length === 1 && currentFsPaths[0] === workspaceDir;
+
+                        if (!isStrictMatch) {
+                            originalFolders = currentFolders.map(f => ({ uri: f.uri, name: f.name }));
+                            const success = vscode.workspace.updateWorkspaceFolders(
+                                0, currentFolders.length,
+                                { uri: targetUri, name: path.basename(workspaceDir) }
+                            );
+                            if (success) {
+                                flog(`  📂 Switched workspace strictly to: ${workspaceDir}`);
+                                await new Promise(r => setTimeout(r, 1000)); // Crucial LSP propagation delay
+                            } else {
+                                flog(`  ⚠️ updateWorkspaceFolders failed`);
+                                originalFolders = null;
+                            }
+                        } else {
+                            flog(`  📂 Workspace already exclusively correct: ${workspaceDir}`);
+                        }
+                    }
+
+                    const startPayload = {};
+                    if (workspaceUri) {
+                        startPayload.workspacePaths = [workspaceUri];
+                        startPayload.workspaceRootPath = workspaceDir;
+                    }
+                    const startResult = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'StartCascade', startPayload);
+                    const newId = startResult && startResult.cascadeId;
+
+                    if (originalFolders && originalFolders.length > 0) {
+                        const current = vscode.workspace.workspaceFolders || [];
+                        vscode.workspace.updateWorkspaceFolders(0, current.length, ...originalFolders);
+                        flog(`  ♻️ Restored ${originalFolders.length} workspace folders`);
+                    }
+
+                    if (!newId) throw new Error('StartCascade failed to return cascadeId');
+                    return newId;
+                } finally {
+                    isWorkspaceSwitching = false;
+                }
+            })();
+
+            cascadePromises.set(convKey, promise);
+            try {
+                cascadeId = await promise;
+                activeCascades.set(convKey, { id: cascadeId, lastUsed: Date.now() });
+                flog(`  🆕 New Cascade created: ${cascadeId.substring(0, 8)} (attempt ${attempt + 1})`);
+            } catch (err) {
+                cascadePromises.delete(convKey);
+                throw err;
+            } finally {
+                cascadePromises.delete(convKey);
+            }
+        }
+
+        // Send message
         const conversationalConfig = {};
-        if (workspaceDir) {
-            conversationalConfig.overrideWorkspaceDirExperimentalUseOnly = workspaceDir;
+        if (workspaceUri) {
+            conversationalConfig.overrideWorkspaceDirExperimentalUseOnly = workspaceUri;
         }
         const sendPayload = {
             cascadeId,
@@ -608,11 +901,26 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null)
                 },
             },
         };
+        // Include images in the sidecar payload (protobuf field: repeated ImageData)
+        if (images && images.length > 0) {
+            sendPayload.images = images.map(img => ({
+                base64Data: img.base64Data,
+                mimeType: img.mimeType,
+            }));
+            flog(`  🖼️ Including ${images.length} image(s) in payload`);
+        }
+        // Also add workspace paths at top level using file URI format
+        if (workspaceUri) {
+            sendPayload.workspacePaths = [workspaceUri];
+            sendPayload.workspacePathsMigrateMeToUris = [workspaceUri];
+        }
         try {
             await makeH2StreamingCall(lsPort, mainCsrf, info.certPath, 'SendUserCascadeMessage', sendPayload);
             flog(`  ✅ SendUserCascadeMessage dispatched (attempt ${attempt + 1})`);
+            flog(`  📦 Payload: ${JSON.stringify(sendPayload).substring(0, 1000)}`);
         } catch (e) {
             flog(`  ⚠️ SendUserCascadeMessage failed: ${e.message.substring(0, 60)}`);
+            activeCascades.delete(convKey);
             continue; // retry with fresh cascade
         }
 
@@ -644,10 +952,12 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null)
                     // Check for capacity error → retry with fresh cascade
                     if (steps.some(s => s.type === 'CORTEX_STEP_TYPE_ERROR_MESSAGE' && JSON.stringify(s.errorMessage || '').toLowerCase().includes('capacity'))) {
                         flog(`  ⚠️ Capacity error (attempt ${attempt + 1}), will retry...`);
+                        activeCascades.delete(convKey);
                         shouldRetry = true;
                     } else {
                         flog(`  ⚠️ IDLE with no PLANNER_RESPONSE after ${elapsed}s`);
-                        shouldRetry = true;
+                        activeCascades.delete(convKey);
+                        shouldRetry = false; // Fail fast to Tier 2 instead of spamming duplicates
                     }
                     break;
                 }

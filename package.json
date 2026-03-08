@@ -3,7 +3,30 @@
   "displayName": "AG Local Bridge",
   "description": "Exposes the running Antigravity instance as a local OpenAI-compatible API on localhost:11435",
   "version": "1.0.0",
-  "publisher": "local",
+  "publisher": "marcodiniz",
+  "license": "MIT",
+  "icon": "./icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marcodiniz/ag-local-bridge"
+  },
+  "homepage": "https://github.com/marcodiniz/ag-local-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/marcodiniz/ag-local-bridge/issues"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "antigravity",
+    "openai",
+    "opencode",
+    "bridge",
+    "ai",
+    "provider",
+    "proxy"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },

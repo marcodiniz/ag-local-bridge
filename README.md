@@ -1,4 +1,4 @@
-# AG Local Bridge
+# AG (Antigravity) Local Bridge
 
 **Exposes your running [Antigravity](https://codeium.com/antigravity) instance as a local OpenAI-compatible API** on `localhost:11435`.
 
@@ -38,7 +38,7 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 
 3. Reload Antigravity (`Ctrl+Shift+P` → *Developer: Reload Window*)
 
-4. Look for **"Ag Local Bridge"** in the Output panel — you should see:
+4. Look for **"AG Local Bridge"** in the Output panel — you should see:
    ```
    ✅ Server running on http://localhost:11435
    ```
@@ -122,22 +122,22 @@ API Key:  anything (not validated)
 
 ## Architecture
 
-The extension uses a 3-tier fallback strategy:
+The extension uses a 2-tier fallback strategy:
 
-1. **Tier 1 — Sidecar ConnectRPC** (preferred): Discovers the Antigravity sidecar process, connects via HTTP/2 with CSRF authentication, and uses the Cascade API (`StartCascade` → `SendUserCascadeMessage` → poll `GetCascadeTrajectory`).
+1. **Tier 1 — Sidecar ConnectRPC** (preferred): Discovers the Antigravity sidecar process, connects via HTTP/2 with CSRF authentication, and uses the Cascade API (`StartCascade` → `SendUserCascadeMessage` → poll `GetCascadeTrajectory`). Conversations are multiplexed and the active workspace is auto-detected.
 
-2. **Tier 2 — VS Code Language Model API**: Falls back to `vscode.lm.selectChatModels()` if the sidecar is unavailable.
-
-3. **Tier 3 — Command Dispatch**: Last resort — fires the message through `antigravity.executeCascadeAction`.
+2. **Tier 2 — Command Dispatch**: Last resort — fires the message through `antigravity.executeCascadeAction`.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `Ag Local Bridge: Start Server` | Start the HTTP server |
-| `Ag Local Bridge: Stop Server` | Stop the HTTP server |
-| `Ag Local Bridge: Show Status` | Display connection status |
-| `Ag Local Bridge: Probe Sidecar` | Test sidecar connectivity |
+| `AG Local Bridge: Start Server` | Start the HTTP server |
+| `AG Local Bridge: Stop Server` | Stop the HTTP server |
+| `AG Local Bridge: Show Status` | Display connection status |
+| `AG Local Bridge: Probe Sidecar` | Test sidecar connectivity |
+| `AG Local Bridge: List Available LM Models` | List configured models and sidecar status |
+| `AG Local Bridge: List Available Chat Commands (Debug)` | List chat commands available for debugging |
 
 ## Configuration
 
