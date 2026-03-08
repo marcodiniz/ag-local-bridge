@@ -52,9 +52,9 @@ Add to `~/.config/opencode/opencode.json`:
 ```json
 {
   "provider": {
-    "ag-bridge": {
+    "ag-local-bridge": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "Ag Local Bridge",
+      "name": "AG Local Bridge",
       "options": {
         "baseURL": "http://localhost:11435/v1",
         "apiKey": "local"

@@ -1,4 +1,4 @@
-// Ag Local Bridge — VS Code Extension
+// AG Local Bridge — VS Code Extension
 // Exposes Antigravity as a local OpenAI-compatible HTTP API on localhost:11435
 // 
 // Architecture:
@@ -30,9 +30,18 @@ let sidecarInfo = null;
 let sidecarInfoTimestamp = 0;
 const SIDECAR_CACHE_TTL = 30000; // 30 seconds
 
-// Cached LM models (discovered via vscode.lm)
-let cachedModels = [];
-let modelPollInterval = null;
+// Concurrency guard variables
+let chatRequestsInFlight = 0;
+const MAX_CONCURRENT_REQUESTS = 3;
+const chatRequestQueue = [];
+const MAX_QUEUE_WAIT_MS = 60000;
+
+// Rate limiting / loop-breaking
+let lastResponseTimestamp = 0;
+const MIN_REQUEST_INTERVAL_MS = 5000; // 5s cooldown between responses
+let lastUserMessageHash = '';
+let lastUserMessageTimestamp = 0;
+const DEDUP_WINDOW_MS = 30000; // 30s dedup window
 
 // CSRF token intercepted from Antigravity's own outgoing requests
 let interceptedCsrf = null;
@@ -54,6 +63,29 @@ const MODEL_MAP = {
     'antigravity': { value: 1035, name: 'Antigravity (Default)', owned_by: 'antigravity', context: 200000, output: 64000, hidden: true },
 };
 const DEFAULT_MODEL_KEY = 'antigravity-claude-sonnet-4-6';
+
+/** Extract text from OpenAI message content (handles both string and content-parts array) */
+function extractText(content) {
+    if (!content) return '';
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content
+            .map(p => {
+                if (typeof p === 'string') return p;
+                if (p && typeof p === 'object') {
+                    if (p.text) return p.text;
+                    try { return JSON.stringify(p); } catch { return ''; }
+                }
+                return String(p);
+            })
+            .join('\n');
+    }
+    if (typeof content === 'object') {
+        if (content.text) return content.text;
+        try { return JSON.stringify(content); } catch { return ''; }
+    }
+    return String(content || '');
+}
 
 function resolveModel(requestedModel) {
     if (!requestedModel || requestedModel === 'antigravity') return { key: DEFAULT_MODEL_KEY, ...MODEL_MAP[DEFAULT_MODEL_KEY] };
@@ -196,12 +228,12 @@ function installH2Interceptor() {
 // ─────────────────────────────────────────────
 
 function activate(context) {
-    outputChannel = vscode.window.createOutputChannel('Ag Local Bridge');
+    outputChannel = vscode.window.createOutputChannel('AG Local Bridge');
     context.subscriptions.push(outputChannel);
     installH2Interceptor(); // Hook http2 sessions to capture outgoing RPC payloads
 
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    statusBarItem.command = 'antigravityBridge.showStatus';
+    statusBarItem.command = 'agLocalBridge.showStatus';
     statusBarItem.tooltip = 'Antigravity Bridge — Click for status';
     context.subscriptions.push(statusBarItem);
 
@@ -210,49 +242,15 @@ function activate(context) {
         vscode.commands.registerCommand('agLocalBridge.stop', () => stopServer()),
         vscode.commands.registerCommand('agLocalBridge.showStatus', () => showStatus()),
         vscode.commands.registerCommand('agLocalBridge.listModels', () => diagnoseModels()),
-        vscode.commands.registerCommand('antigravityBridge.listCommands', () => diagnoseCommands()),
-        vscode.commands.registerCommand('antigravityBridge.probeSidecar', () => probeSidecar())
+        vscode.commands.registerCommand('agLocalBridge.listCommands', () => diagnoseCommands()),
+        vscode.commands.registerCommand('agLocalBridge.probeSidecar', () => probeSidecar())
     );
 
     log('Extension activated. Starting server...');
     startServer().catch((err) => log(`Startup error: ${err.message}`, true));
-
-    // Listen for LM model changes (Antigravity may register models lazily)
-    if (vscode.lm && typeof vscode.lm.onDidChangeChatModels === 'function') {
-        context.subscriptions.push(
-            vscode.lm.onDidChangeChatModels(() => {
-                log('📡 vscode.lm models changed — refreshing cache');
-                refreshModelCache();
-            })
-        );
-    }
-
-    // Poll for models periodically (some LMs register after extensions activate)
-    refreshModelCache();
-    modelPollInterval = setInterval(refreshModelCache, 10000);
-    context.subscriptions.push({ dispose: () => clearInterval(modelPollInterval) });
-
-    // Trigger Antigravity agent initialization to nudge model registration
-    setTimeout(async () => {
-        try { await vscode.commands.executeCommand('antigravity.initializeAgent'); } catch { /* ignore */ }
-        try { await vscode.commands.executeCommand('antigravity.agentSidePanel.open'); } catch { /* ignore */ }
-        setTimeout(refreshModelCache, 3000);
-    }, 2000);
-}
-
-async function refreshModelCache() {
-    try {
-        if (!vscode.lm || typeof vscode.lm.selectChatModels !== 'function') return;
-        const models = await vscode.lm.selectChatModels({});
-        if (models && models.length > 0 && cachedModels.length === 0) {
-            log(`🎉 Found ${models.length} LM model(s): ${models.map(m => m.id || m.name).join(', ')}`);
-        }
-        cachedModels = models || [];
-    } catch { /* ignore polling errors */ }
 }
 
 function deactivate() {
-    if (modelPollInterval) clearInterval(modelPollInterval);
     stopServer();
 }
 
@@ -339,23 +337,108 @@ async function handleChatCompletions(req, res) {
     try { payload = JSON.parse(body); }
     catch { return sendJson(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request' } }); }
 
+    // Debug: log incoming request payload
+    log(`📥 Request body (${body.length} bytes): ${body.substring(0, 500)}`);
+
     const isStream = payload.stream === true;
     const messages = payload.messages || [];
     const completionId = `chatcmpl-${randomUUID()}`;
 
-    // Strategy order: sidecar ConnectRPC → vscode.lm → command dispatch
+    // Safeguard: detect [object Object] serialization corruption
+    const userTexts = messages.filter(m => m.role === 'user').map(m => extractText(m.content));
+    const allCorrupted = userTexts.length > 0 && userTexts.every(t => /^\[object Object\]/.test(t));
+    if (allCorrupted) {
+        log(`⚠️ [object Object] DETECTED — upstream caller is not serializing messages properly!`, true);
+        log(`⚠️ Raw messages: ${JSON.stringify(messages).substring(0, 300)}`);
+        return sendJson(res, 400, {
+            error: {
+                message: 'Messages contain "[object Object]" — the caller is not serializing message objects to JSON properly. Check that content is a string or valid content-parts array.',
+                type: 'invalid_request',
+                raw_messages: messages.slice(0, 3),
+            }
+        });
+    }
+
+    // ── Rate limiting: prevent feedback loops ──
+    const now = Date.now();
+    const timeSinceLastResponse = now - lastResponseTimestamp;
+    if (timeSinceLastResponse < MIN_REQUEST_INTERVAL_MS) {
+        log(`🛑 Rate limited — only ${timeSinceLastResponse}ms since last response (min ${MIN_REQUEST_INTERVAL_MS}ms)`);
+        return sendJson(res, 429, {
+            error: { message: `Rate limited: please wait ${Math.ceil((MIN_REQUEST_INTERVAL_MS - timeSinceLastResponse) / 1000)}s before sending another request.`, type: 'rate_limit' }
+        });
+    }
+
+    // ── Duplicate detection: same user message within dedup window ──
+    const userMsgText = userTexts.join('\n').trim();
+    const msgHash = userMsgText.substring(0, 200);
+    if (msgHash === lastUserMessageHash && (now - lastUserMessageTimestamp) < DEDUP_WINDOW_MS) {
+        log(`🛑 Duplicate message rejected (same message within ${DEDUP_WINDOW_MS / 1000}s)`);
+        return sendJson(res, 429, {
+            error: { message: 'Duplicate message detected — identical request within dedup window.', type: 'rate_limit' }
+        });
+    }
+    lastUserMessageHash = msgHash;
+    lastUserMessageTimestamp = now;
 
     // Resolve model from request
     const resolved = resolveModel(payload.model);
     log(`📡 Model: ${resolved.key} (enum=${resolved.value})`);
 
+    // Resolve workspace directory: request body > header > VS Code workspace
+    let workspaceDir = payload.workspace_dir || req.headers['x-workspace-dir'] || null;
+    if (!workspaceDir) {
+        const folders = vscode.workspace.workspaceFolders;
+        if (folders && folders.length > 0 && folders[0].uri.scheme === 'file') {
+            workspaceDir = folders[0].uri.fsPath;
+        }
+    }
+    if (workspaceDir) {
+        log(`📂 Workspace dir: ${workspaceDir}`);
+    } else {
+        log(`⚠️ No workspace dir resolved — Antigravity may pick a random project`);
+    }
+
+    // ── Concurrency guard: limit parallel requests ──
+    if (chatRequestsInFlight >= MAX_CONCURRENT_REQUESTS) {
+        log(`🛑 Request rejected — ${chatRequestsInFlight} requests already in flight (max ${MAX_CONCURRENT_REQUESTS})`);
+        const busyMsg = '[Too many concurrent requests. Please wait and try again.]';
+        if (isStream) {
+            setupStreamResponse(res);
+            res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, busyMsg))}\n\n`);
+            res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+        } else {
+            sendJson(res, 429, { error: { message: busyMsg, type: 'rate_limit' } });
+        }
+        return;
+    }
+
+    chatRequestsInFlight++;
+    log(`📡 Requests in flight: ${chatRequestsInFlight}`);
+    try {
+        await _handleChatCompletionsInner(res, isStream, messages, completionId, resolved, workspaceDir);
+    } finally {
+        chatRequestsInFlight--;
+        lastResponseTimestamp = Date.now();
+        // Drain ALL queued requests (reject them) — don't chain them
+        while (chatRequestQueue.length > 0) {
+            const queued = chatRequestQueue.shift();
+            queued(); // resolve with false (timeout will have fired)
+        }
+    }
+}
+
+async function _handleChatCompletionsInner(res, isStream, messages, completionId, resolved, workspaceDir) {
     // Tier 1: Direct sidecar ConnectRPC call
     try {
-        const result = await callSidecarChat(messages, resolved.value);
+        const result = await callSidecarChat(messages, resolved.value, workspaceDir);
         if (result) {
             if (isStream) {
                 setupStreamResponse(res);
                 res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, result))}\n\n`);
+                res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
                 res.write('data: [DONE]\n\n');
                 res.end();
             } else {
@@ -367,46 +450,17 @@ async function handleChatCompletions(req, res) {
         log(`⚠️ Sidecar call failed: ${err.message}`);
     }
 
-    // Tier 2: vscode.lm API (use cached models or fresh query)
+    // Tier 2: Command dispatch (fire-and-forget, returns acknowledgement)
+    // NOTE: This can create a feedback loop if the dispatched command routes back through the bridge.
     try {
-        if (vscode.lm && typeof vscode.lm.selectChatModels === 'function') {
-            const models = cachedModels.length > 0 ? cachedModels : await vscode.lm.selectChatModels({});
-            if (models && models.length > 0) {
-                const model = models[0];
-                const lmMessages = messages.map((m) =>
-                    m.role === 'assistant'
-                        ? vscode.LanguageModelChatMessage.Assistant(m.content)
-                        : vscode.LanguageModelChatMessage.User(m.content)
-                );
-                const tokenSource = new vscode.CancellationTokenSource();
-                const response = await model.sendRequest(lmMessages, {}, tokenSource.token);
-                let fullText = '';
-                for await (const chunk of response.stream) {
-                    if (chunk instanceof vscode.LanguageModelTextPart) fullText += chunk.value;
-                }
-                if (isStream) {
-                    setupStreamResponse(res);
-                    res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, model.id || 'antigravity', fullText))}\n\n`);
-                    res.write('data: [DONE]\n\n');
-                    res.end();
-                } else {
-                    sendJson(res, 200, buildCompletion(completionId, model.id || 'antigravity', fullText));
-                }
-                return;
-            }
-        }
-    } catch (err) {
-        log(`⚠️ vscode.lm failed: ${err.message}`);
-    }
-
-    // Tier 3: Command dispatch (fire-and-forget, returns acknowledgement)
-    try {
-        const userMessage = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+        const userMessage = messages.filter((m) => m.role === 'user').map((m) => extractText(m.content)).join('\n');
+        log(`⚠️ Falling back to Tier 2 command dispatch (sidecar unavailable)`);
         await vscode.commands.executeCommand('antigravity.executeCascadeAction', { type: 'sendMessage', message: userMessage });
         const text = '[Message dispatched to Antigravity agent panel. Check the Antigravity chat panel for the response.]';
         if (isStream) {
             setupStreamResponse(res);
             res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'antigravity', text))}\n\n`);
+            res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'antigravity', null, 'stop'))}\n\n`);
             res.write('data: [DONE]\n\n');
             res.end();
         } else {
@@ -505,11 +559,11 @@ function discoverSidecar() {
  *  - plannerTypeConfig: { conversational: {} } = conversational cascade mode
  *  - items: [{ text: message }] = user message items array
  */
-async function callSidecarChat(messages, modelValue = 1035) {
+async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null) {
     const info = discoverSidecar();
     if (!info) throw new Error('Sidecar not discovered');
 
-    const userMessage = messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+    const userMessage = messages.filter((m) => m.role === 'user').map((m) => extractText(m.content)).join('\n');
     const mainCsrf = info.csrfTokens[0];
     const flog = (msg) => { log(msg); try { fs.appendFileSync('C:/Users/User/bridge-debug.log', `[${new Date().toISOString()}] ${msg}\n`); } catch { } };
 
@@ -539,12 +593,17 @@ async function callSidecarChat(messages, modelValue = 1035) {
         flog(`  🆕 Cascade: ${cascadeId.substring(0, 8)} (attempt ${attempt + 1})`);
 
         // Send message — model:334 = Claude 4.5 Sonnet Thinking (verified working)
+        // Build conversational config, optionally with workspace override
+        const conversationalConfig = {};
+        if (workspaceDir) {
+            conversationalConfig.overrideWorkspaceDirExperimentalUseOnly = workspaceDir;
+        }
         const sendPayload = {
             cascadeId,
             items: [{ text: userMessage }],
             cascadeConfig: {
                 plannerConfig: {
-                    plannerTypeConfig: { conversational: {} },
+                    plannerTypeConfig: { conversational: conversationalConfig },
                     requestedModel: { model: modelValue },
                 },
             },
@@ -620,8 +679,23 @@ function extractCascadeResponse(traj) {
 }
 
 
-/** Make a H2+JSON ConnectRPC call to the LanguageServerService */
-function makeH2JsonCall(port, csrf, certPath, method, body) {
+/** Make a H2+JSON ConnectRPC call to the LanguageServerService (with automatic retry on transient connect failures) */
+async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await _makeH2JsonCallOnce(port, csrf, certPath, method, body);
+        } catch (e) {
+            // Retry on transient H2 connect errors (empty message = TLS/socket race)
+            if (attempt < retries && (e.message.includes('H2 connect:') || e.message.includes('H2 timeout'))) {
+                await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                continue;
+            }
+            throw e;
+        }
+    }
+}
+
+function _makeH2JsonCallOnce(port, csrf, certPath, method, body) {
     const payload = JSON.stringify(body);
     return new Promise((resolve, reject) => {
         let ca;
@@ -629,7 +703,9 @@ function makeH2JsonCall(port, csrf, certPath, method, body) {
         const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
         let totalBody = '';
         let status;
-        client.on('error', (err) => { reject(new Error('H2 connect: ' + err.message)); });
+        let settled = false;
+        const settle = (fn, val) => { if (!settled) { settled = true; fn(val); } };
+        client.on('error', (err) => { settle(reject, new Error('H2 connect: ' + err.message)); });
         client.on('connect', () => {
             const req = client.request({
                 ':method': 'POST',
@@ -643,17 +719,17 @@ function makeH2JsonCall(port, csrf, certPath, method, body) {
             req.on('end', () => {
                 client.close();
                 if (status === 200) {
-                    try { resolve(JSON.parse(totalBody)); }
-                    catch { resolve(totalBody); }
+                    try { settle(resolve, JSON.parse(totalBody)); }
+                    catch { settle(resolve, totalBody); }
                 } else {
-                    reject(new Error(`HTTP ${status}: ${totalBody.substring(0, 150)}`));
+                    settle(reject, new Error(`HTTP ${status}: ${totalBody.substring(0, 150)}`));
                 }
             });
-            req.on('error', (e) => { client.close(); reject(e); });
+            req.on('error', (e) => { client.close(); settle(reject, e); });
             req.write(payload);
             req.end();
         });
-        setTimeout(() => { try { client.close(); } catch { } reject(new Error('H2 timeout')); }, 10000);
+        setTimeout(() => { try { client.close(); } catch { } settle(reject, new Error('H2 timeout')); }, 10000);
     });
 }
 
@@ -665,11 +741,17 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
         try { ca = certPath ? fs.readFileSync(certPath) : undefined; } catch { /* ignore */ }
         const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
         let status, chunks = [];
-        client.on('error', (err) => { reject(new Error('H2 connect: ' + err.message)); });
+
         const timer = setTimeout(() => {
             try { client.close(); } catch { }
             resolve(); // streaming RPC — timeout is normal, means server started streaming
-        }, 5000);
+        }, 30000);
+
+        client.on('error', (err) => {
+            clearTimeout(timer);
+            reject(new Error('H2 connect: ' + err.message));
+        });
+
         client.on('connect', () => {
             const req = client.request({
                 ':method': 'POST',
@@ -682,7 +764,7 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
             req.on('data', (d) => { chunks.push(d); });
             req.on('end', () => {
                 clearTimeout(timer);
-                client.close();
+                try { client.close(); } catch { }
                 if (status === 200) resolve();
                 else {
                     const body = Buffer.concat(chunks).toString('utf8');
@@ -691,8 +773,7 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
             });
             req.on('error', (e) => {
                 clearTimeout(timer);
-                // Stream error after receiving data = normal for streaming RPCs
-                client.close();
+                try { client.close(); } catch { }
                 if (status === 200 || chunks.length > 0) resolve();
                 else reject(e);
             });
@@ -849,13 +930,49 @@ async function probeSidecar() {
 
 async function diagnoseModels() {
     outputChannel.show();
-    log('─── vscode.lm Models ───');
-    if (!vscode.lm) { log('❌ API not available'); return; }
-    try {
-        const models = await vscode.lm.selectChatModels({});
-        if (!models || models.length === 0) { log('⚠️ No models registered'); return; }
-        models.forEach((m) => log(`  ✅ ${m.id} | ${m.vendor}/${m.family} "${m.name}"`));
-    } catch (e) { log(`❌ ${e.message}`); }
+
+    // 1. Show bridge MODEL_MAP (the models available via the OpenAI-compatible API)
+    log('─── AG Local Bridge Models ───');
+    const visible = Object.entries(MODEL_MAP).filter(([, m]) => !m.hidden);
+    if (visible.length === 0) {
+        log('⚠️ No models configured in MODEL_MAP');
+    } else {
+        log(`  ${visible.length} model(s) available:`);
+        for (const [id, m] of visible) {
+            log(`  ✅ ${id}  →  enum=${m.value}  "${m.name}"  (${m.owned_by}, ctx=${m.context}, out=${m.output})`);
+        }
+        log(`  Default: ${DEFAULT_MODEL_KEY}`);
+    }
+
+    // 2. Check sidecar connectivity
+    log('─── Sidecar Status ───');
+    const info = discoverSidecar();
+    if (!info) {
+        log('  ❌ Sidecar not found');
+    } else {
+        log(`  PID: ${info.pid}`);
+        log(`  Ports: ${info.actualPorts.join(', ')}`);
+        log(`  Cert: ${info.certPath ? 'yes' : 'no'}`);
+        // Quick connectivity test on LS port
+        const lsPorts = info.actualPorts.filter(p => p !== info.extensionServerPort);
+        let connected = false;
+        for (const port of lsPorts) {
+            try {
+                await makeH2JsonCall(port, info.csrfTokens[0], info.certPath, 'GetStatus', {});
+                log(`  ✅ LS port ${port} — connected`);
+                connected = true;
+                break;
+            } catch (e) {
+                log(`  ❌ LS port ${port} — ${e.message.substring(0, 60)}`);
+            }
+        }
+        if (connected) {
+            log('  → Models above should work via POST /v1/chat/completions');
+        } else {
+            log('  ⚠️ No reachable LS port — sidecar calls will fail');
+        }
+    }
+
 }
 
 async function diagnoseCommands() {
@@ -872,18 +989,18 @@ async function showStatus() {
     const port = config.get('port', 11435);
     const info = discoverSidecar();
 
-    log('─── Ag Local Bridge Status ───');
+    log('─── AG Local Bridge Status ───');
     log(`  Server: ${server ? `✅ http://localhost:${port}` : '❌ Stopped'}`);
     log(`  Sidecar: ${info ? `✅ port ${info.extensionServerPort}` : '❌ Not found'}`);
-    log(`  vscode.lm: ${vscode.lm ? '✅' : '❌'}`);
 }
 
 // ─────────────────────────────────────────────
 // Response Builders
 // ─────────────────────────────────────────────
 
-function buildStreamChunk(id, model, content) {
-    return { id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] };
+function buildStreamChunk(id, model, content, finishReason = null) {
+    const delta = content !== null ? { role: 'assistant', content } : {};
+    return { id, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta, finish_reason: finishReason }] };
 }
 
 function buildCompletion(id, model, content) {
@@ -918,6 +1035,9 @@ function readBody(req) {
 }
 
 function log(msg, isError = false) {
+    if (typeof msg === 'object') {
+        try { msg = JSON.stringify(msg); } catch { msg = String(msg); }
+    }
     const ts = new Date().toISOString().slice(11, 23);
     outputChannel.appendLine(`[${ts}] ${msg}`);
     if (isError) console.error(`[ag-bridge] ${msg}`);
