@@ -1,0 +1,57 @@
+{
+  "name": "ag-local-bridge",
+  "displayName": "Ag Local Bridge",
+  "description": "Exposes the running Antigravity instance as a local OpenAI-compatible API on localhost:11435",
+  "version": "1.0.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Ag Local Bridge",
+      "properties": {
+        "agLocalBridge.port": {
+          "type": "number",
+          "default": 11435,
+          "description": "Port for the local OpenAI-compatible HTTP API server"
+        },
+        "agLocalBridge.logRequests": {
+          "type": "boolean",
+          "default": false,
+          "description": "Log full request/response details to the Output channel"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "agLocalBridge.start",
+        "title": "Ag Local Bridge: Start Server"
+      },
+      {
+        "command": "agLocalBridge.stop",
+        "title": "Ag Local Bridge: Stop Server"
+      },
+      {
+        "command": "agLocalBridge.showStatus",
+        "title": "Ag Local Bridge: Show Status"
+      },
+      {
+        "command": "agLocalBridge.listModels",
+        "title": "Ag Local Bridge: List Available LM Models"
+      },
+      {
+        "command": "agLocalBridge.listCommands",
+        "title": "Ag Local Bridge: List Available Chat Commands (Debug)"
+      },
+      {
+        "command": "agLocalBridge.probeSidecar",
+        "title": "Ag Local Bridge: Probe Sidecar Connection"
+      }
+    ]
+  }
+}
