@@ -15,6 +15,7 @@ const https = require('https');
 const http2 = require('http2');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync } = require('child_process');
 const { randomUUID } = require('crypto');
 
@@ -792,7 +793,7 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null,
     // Save images to temp files so the agent can view them with its tools
     const savedImagePaths = [];
     if (images && images.length > 0) {
-        const tmpDir = path.join(require('os').tmpdir(), 'ag-bridge-images');
+        const tmpDir = path.join(os.tmpdir(), 'ag-bridge-images');
         try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { }
         for (let i = 0; i < images.length; i++) {
             const img = images[i];
@@ -930,28 +931,10 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null,
                 },
             },
         };
-        // Include images in the sidecar payload
-        // Strategy: send via multiple fields for maximum compatibility:
-        //   - images: repeated ImageData (uses base64_data + mime_type)
-        //   - media: repeated Media (uses inline_data as bytes + mime_type)
+        // NOTE: images are handled via temp files — paths are prepended to userMessage above.
+        // The proto `images`/`media` fields cause HTTP 400 unmarshal errors, so we don't send them.
         if (images && images.length > 0) {
-            // Legacy ImageData field (base64_data = string)
-            sendPayload.images = images.map(img => ({
-                base64Data: img.base64Data,
-                base64_data: img.base64Data,
-                mimeType: img.mimeType,
-                mime_type: img.mimeType,
-            }));
-            // Newer Media field (inline_data = bytes encoded as base64)
-            sendPayload.media = images.map(img => ({
-                mimeType: img.mimeType,
-                mime_type: img.mimeType,
-                payload: { case: 'inlineData', value: img.base64Data },
-                inlineData: img.base64Data,
-                inline_data: img.base64Data,
-            }));
-            const totalKb = Math.round(images.reduce((s, i) => s + (i.base64Data || '').length, 0) / 1024);
-            flog(`  🖼️ Including ${images.length} image(s) in payload (~${totalKb}KB base64)`);
+            flog(`  🖼️ ${images.length} image(s) referenced as temp file paths in message text`);
         }
         // Also add workspace paths at top level using file URI format
         if (workspaceUri) {

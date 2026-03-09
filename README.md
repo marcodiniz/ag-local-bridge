@@ -12,6 +12,14 @@ Your tool → HTTP :11435 → VS Code extension → Antigravity sidecar (Connect
 
 The extension runs inside Antigravity's VS Code process, discovers the sidecar via process inspection, intercepts CSRF tokens from Antigravity's own traffic, and proxies your requests through the same authenticated channel Antigravity uses internally.
 
+## Features
+
+- **OpenAI-compatible API** — drop-in replacement for any tool expecting OpenAI format
+- **Image support** — paste screenshots or attach images from OpenAI clients; images are saved to temp files and referenced in the message so the agent can view them
+- **Workspace-aware** — automatically detects and sets the correct project context via `x-workspace-dir` / `x-workspace-uri` headers
+- **Conversation multiplexing** — reuses Cascade conversations for efficiency, with automatic retry on capacity errors
+- **Streaming & non-streaming** — both modes supported
+
 ## Available Models
 
 | Model ID | Description |
@@ -25,23 +33,33 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 
 ## Installation
 
-1. Locate your Antigravity extensions directory:
-   - **Windows**: `%USERPROFILE%\.antigravity\extensions\`
-   - **macOS**: `~/.antigravity/extensions/`
-   - **Linux**: `~/.antigravity/extensions/`
+### From Open VSX (recommended)
 
-2. Copy this project into a folder there:
+1. Open Antigravity
+2. Go to **Extensions** (`Ctrl+Shift+X`)
+3. Search for **"AG Local Bridge"** by marcodiniz
+4. Click **Install**
+5. Reload Antigravity (`Ctrl+Shift+P` → *Developer: Reload Window*)
+
+### Manual install
+
+1. Clone into your Antigravity extensions directory:
    ```bash
-   # Example (Windows)
+   # Windows
    git clone https://github.com/marcodiniz/ag-local-bridge "%USERPROFILE%\.antigravity\extensions\ag-local-bridge-1.0.0-universal"
+
+   # macOS / Linux
+   git clone https://github.com/marcodiniz/ag-local-bridge ~/.antigravity/extensions/ag-local-bridge-1.0.0-universal
    ```
 
-3. Reload Antigravity (`Ctrl+Shift+P` → *Developer: Reload Window*)
+2. Reload Antigravity (`Ctrl+Shift+P` → *Developer: Reload Window*)
 
-4. Look for **"AG Local Bridge"** in the Output panel — you should see:
-   ```
-   ✅ Server running on http://localhost:11435
-   ```
+### Verify
+
+Look for **"AG Local Bridge"** in the Output panel — you should see:
+```
+✅ Server running on http://localhost:11435
+```
 
 ## Usage
 
@@ -62,15 +80,33 @@ Add to `~/.config/opencode/opencode.json`:
       "models": {
         "antigravity-claude-sonnet-4-6": {
           "name": "Claude Sonnet 4.6 (Antigravity)",
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "limit": { "context": 200000, "output": 64000 }
+        },
+        "antigravity-claude-opus-4-6-thinking": {
+          "name": "Claude Opus 4.6 Thinking (Antigravity)",
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
           "limit": { "context": 200000, "output": 64000 }
         },
         "antigravity-gemini-3.1-pro-high": {
           "name": "Gemini 3.1 Pro High (Antigravity)",
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "limit": { "context": 1048576, "output": 65535 }
+        },
+        "antigravity-gemini-3.1-pro-low": {
+          "name": "Gemini 3.1 Pro Low (Antigravity)",
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
           "limit": { "context": 1048576, "output": 65535 }
         },
         "antigravity-gemini-3-flash": {
           "name": "Gemini 3 Flash (Antigravity)",
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
           "limit": { "context": 1048576, "output": 65536 }
+        },
+        "antigravity-gpt-oss-120b": {
+          "name": "GPT-OSS 120B Medium (Antigravity)",
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "limit": { "context": 128000, "output": 16384 }
         }
       }
     }
@@ -78,7 +114,9 @@ Add to `~/.config/opencode/opencode.json`:
 }
 ```
 
-Then select `ag-bridge/antigravity-claude-sonnet-4-6` as your model.
+Then select `ag-local-bridge/antigravity-claude-sonnet-4-6` as your model.
+
+> **Image support**: The `modalities` field enables image input (clipboard paste, file attach). Images are saved to temp files and the agent views them with its built-in file tools.
 
 ### With curl
 
@@ -103,6 +141,18 @@ curl http://localhost:11435/v1/chat/completions \
     "messages": [{"role": "user", "content": "Hello!"}],
     "stream": true
   }'
+
+# With image (base64 data URL)
+curl http://localhost:11435/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "antigravity-claude-sonnet-4-6",
+    "messages": [{"role": "user", "content": [
+      {"type": "text", "text": "What do you see?"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}}
+    ]}],
+    "stream": false
+  }'
 ```
 
 ### With any OpenAI-compatible client
@@ -118,7 +168,29 @@ API Key:  anything (not validated)
 |--------|------|-------------|
 | `GET` | `/v1/models` | List available models |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming & non-streaming) |
+| `POST` | `/v1/proxy` | Forward arbitrary RPC to sidecar |
 | `GET` | `/v1/debug` | Debug info (sidecar ports, CSRF, captures) |
+
+## Image Support
+
+Images sent via the OpenAI `image_url` content type are handled as follows:
+
+1. **Base64 data URLs** (`data:image/png;base64,...`) — decoded and saved to a temp file
+2. **Remote URLs** (`https://...`) — downloaded, then saved to a temp file
+3. **File URIs** (`file:///C:/path/to/image.png`) — read directly from disk
+
+The image file path is prepended to the message text so the Antigravity agent can use its `view_file` tool to inspect the image.
+
+## Workspace Context
+
+Pass workspace context via HTTP headers:
+
+| Header | Description |
+|--------|-------------|
+| `x-workspace-dir` | Absolute filesystem path (e.g. `C:\code\myproject`) |
+| `x-workspace-uri` | File URI (e.g. `file:///C:/code/myproject`) |
+
+When set, the bridge switches the active VS Code workspace folder before creating a Cascade, ensuring the agent operates in the correct project context.
 
 ## Architecture
 
