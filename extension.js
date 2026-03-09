@@ -785,9 +785,38 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null,
     const info = discoverSidecar();
     if (!info) throw new Error('Sidecar not discovered');
 
-    const userMessage = messages.filter((m) => m.role === 'user').map((m) => extractText(m.content)).join('\n');
+    let userMessage = messages.filter((m) => m.role === 'user').map((m) => extractText(m.content)).join('\n');
     const mainCsrf = info.csrfTokens[0];
     const flog = (msg) => { log(msg); try { fs.appendFileSync('C:/Users/User/bridge-debug.log', `[${new Date().toISOString()}] ${msg}\n`); } catch { } };
+
+    // Save images to temp files so the agent can view them with its tools
+    const savedImagePaths = [];
+    if (images && images.length > 0) {
+        const tmpDir = path.join(require('os').tmpdir(), 'ag-bridge-images');
+        try { fs.mkdirSync(tmpDir, { recursive: true }); } catch { }
+        for (let i = 0; i < images.length; i++) {
+            const img = images[i];
+            if (!img.base64Data) continue;
+            const ext = (img.mimeType || 'image/png').split('/')[1] || 'png';
+            const fileName = `bridge_image_${Date.now()}_${i}.${ext}`;
+            const filePath = path.join(tmpDir, fileName);
+            try {
+                fs.writeFileSync(filePath, Buffer.from(img.base64Data, 'base64'));
+                savedImagePaths.push(filePath);
+                flog(`  🖼️ Saved image ${i + 1} to: ${filePath}`);
+            } catch (e) {
+                flog(`  ⚠️ Failed to save image: ${e.message}`);
+            }
+        }
+        // Prepend image references to the user message so the agent knows to look at them
+        if (savedImagePaths.length > 0) {
+            const imageRefs = savedImagePaths.map((p, i) =>
+                `[Attached Image ${i + 1}]: ${p.replace(/\\/g, '/')}`
+            ).join('\n');
+            userMessage = `${imageRefs}\n\n${userMessage}`;
+            flog(`  🖼️ Prepended ${savedImagePaths.length} image path(s) to message`);
+        }
+    }
 
     // Find a working LS port
     const lsPorts = info.actualPorts.filter(p => p !== info.extensionServerPort);
@@ -901,13 +930,28 @@ async function callSidecarChat(messages, modelValue = 1035, workspaceDir = null,
                 },
             },
         };
-        // Include images in the sidecar payload (protobuf field: repeated ImageData)
+        // Include images in the sidecar payload
+        // Strategy: send via multiple fields for maximum compatibility:
+        //   - images: repeated ImageData (uses base64_data + mime_type)
+        //   - media: repeated Media (uses inline_data as bytes + mime_type)
         if (images && images.length > 0) {
+            // Legacy ImageData field (base64_data = string)
             sendPayload.images = images.map(img => ({
                 base64Data: img.base64Data,
+                base64_data: img.base64Data,
                 mimeType: img.mimeType,
+                mime_type: img.mimeType,
             }));
-            flog(`  🖼️ Including ${images.length} image(s) in payload`);
+            // Newer Media field (inline_data = bytes encoded as base64)
+            sendPayload.media = images.map(img => ({
+                mimeType: img.mimeType,
+                mime_type: img.mimeType,
+                payload: { case: 'inlineData', value: img.base64Data },
+                inlineData: img.base64Data,
+                inline_data: img.base64Data,
+            }));
+            const totalKb = Math.round(images.reduce((s, i) => s + (i.base64Data || '').length, 0) / 1024);
+            flog(`  🖼️ Including ${images.length} image(s) in payload (~${totalKb}KB base64)`);
         }
         // Also add workspace paths at top level using file URI format
         if (workspaceUri) {
