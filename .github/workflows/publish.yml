@@ -22,7 +22,7 @@ jobs:
           VERSION="1.0.${{ github.run_number }}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           npm version "$VERSION" --no-git-tag-version
-          echo "📦 Version: $VERSION"
+          echo "📦  Version: $VERSION"
 
       - name: Package extension
         run: vsce package
