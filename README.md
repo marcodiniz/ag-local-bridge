@@ -31,14 +31,14 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 
 ## Available Models
 
-| Model ID | Description |
-|----------|-------------|
-| `antigravity-claude-sonnet-4-6` | Claude Sonnet 4.6 with Thinking **(default)** |
-| `antigravity-claude-opus-4-6-thinking` | Claude Opus 4.6 with Thinking |
-| `antigravity-gemini-3-flash` | Gemini 3 Flash |
-| `antigravity-gemini-3.1-pro-high` | Gemini 3.1 Pro — High thinking |
-| `antigravity-gemini-3.1-pro-low` | Gemini 3.1 Pro — Low thinking |
-| `antigravity-gpt-oss-120b` | GPT-OSS 120B Medium |
+| Model ID                               | Description                                   |
+| -------------------------------------- | --------------------------------------------- |
+| `antigravity-claude-sonnet-4-6`        | Claude Sonnet 4.6 with Thinking **(default)** |
+| `antigravity-claude-opus-4-6-thinking` | Claude Opus 4.6 with Thinking                 |
+| `antigravity-gemini-3-flash`           | Gemini 3 Flash                                |
+| `antigravity-gemini-3.1-pro-high`      | Gemini 3.1 Pro — High thinking                |
+| `antigravity-gemini-3.1-pro-low`       | Gemini 3.1 Pro — Low thinking                 |
+| `antigravity-gpt-oss-120b`             | GPT-OSS 120B Medium                           |
 
 ## Installation
 
@@ -48,11 +48,12 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 2. Go to **Extensions** (`Ctrl+Shift+X`)
 3. Search for **"AG Local Bridge"** by marcodiniz
 4. Click **Install**
-5. Reload Antigravity (`Ctrl+Shift+P` → *Developer: Reload Window*)
+5. Reload Antigravity (`Ctrl+Shift+P` → _Developer: Reload Window_)
 
 ### Manual install
 
 1. Clone into your Antigravity extensions directory:
+
    ```bash
    # Windows
    git clone https://github.com/marcodiniz/ag-local-bridge "%USERPROFILE%\.antigravity\extensions\ag-local-bridge-1.0.0-universal"
@@ -61,11 +62,12 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
    git clone https://github.com/marcodiniz/ag-local-bridge ~/.antigravity/extensions/ag-local-bridge-1.0.0-universal
    ```
 
-2. Reload Antigravity (`Ctrl+Shift+P` → *Developer: Reload Window*)
+2. Reload Antigravity (`Ctrl+Shift+P` → _Developer: Reload Window_)
 
 ### Verify
 
 Look for **"AG Local Bridge"** in the Output panel — you should see:
+
 ```
 ✅ Server running on http://localhost:11435
 ```
@@ -173,12 +175,12 @@ API Key:  anything (not validated)
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/v1/models` | List available models |
+| Method | Path                   | Description                                 |
+| ------ | ---------------------- | ------------------------------------------- |
+| `GET`  | `/v1/models`           | List available models                       |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming & non-streaming) |
-| `POST` | `/v1/proxy` | Forward arbitrary RPC to sidecar |
-| `GET` | `/v1/debug` | Debug info (sidecar ports, CSRF, captures) |
+| `POST` | `/v1/proxy`            | Forward arbitrary RPC to sidecar            |
+| `GET`  | `/v1/debug`            | Debug info (sidecar ports, CSRF, captures)  |
 
 ## Image Support
 
@@ -194,10 +196,10 @@ The image file path is prepended to the message text so the Antigravity agent ca
 
 Pass workspace context via HTTP headers:
 
-| Header | Description |
-|--------|-------------|
+| Header            | Description                                         |
+| ----------------- | --------------------------------------------------- |
 | `x-workspace-dir` | Absolute filesystem path (e.g. `C:\code\myproject`) |
-| `x-workspace-uri` | File URI (e.g. `file:///C:/code/myproject`) |
+| `x-workspace-uri` | File URI (e.g. `file:///C:/code/myproject`)         |
 
 When set, the bridge switches the active VS Code workspace folder before creating a Cascade, ensuring the agent operates in the correct project context.
 
@@ -211,20 +213,20 @@ The extension uses a 2-tier fallback strategy:
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `AG Local Bridge: Start Server` | Start the HTTP server |
-| `AG Local Bridge: Stop Server` | Stop the HTTP server |
-| `AG Local Bridge: Show Status` | Display connection status |
-| `AG Local Bridge: Probe Sidecar` | Test sidecar connectivity |
-| `AG Local Bridge: List Available LM Models` | List configured models and sidecar status |
+| Command                                                 | Description                                |
+| ------------------------------------------------------- | ------------------------------------------ |
+| `AG Local Bridge: Start Server`                         | Start the HTTP server                      |
+| `AG Local Bridge: Stop Server`                          | Stop the HTTP server                       |
+| `AG Local Bridge: Show Status`                          | Display connection status                  |
+| `AG Local Bridge: Probe Sidecar`                        | Test sidecar connectivity                  |
+| `AG Local Bridge: List Available LM Models`             | List configured models and sidecar status  |
 | `AG Local Bridge: List Available Chat Commands (Debug)` | List chat commands available for debugging |
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `agLocalBridge.port` | `11435` | HTTP server port |
+| Setting                     | Default | Description                  |
+| --------------------------- | ------- | ---------------------------- |
+| `agLocalBridge.port`        | `11435` | HTTP server port             |
 | `agLocalBridge.logRequests` | `false` | Log request/response details |
 
 ## Requirements

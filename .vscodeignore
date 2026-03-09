@@ -3,13 +3,21 @@
 .gitignore
 .vscode-test/**
 node_modules/**
+.github/**
 
 # Build artifacts
 *.vsix
 
 # Dev/design assets (large files not needed at runtime)
-logo.png
+assets/**
 bridge-debug.log
 
 # Docs already shown on Marketplace from README
 CHANGELOG.md
+
+# Dev config & tests (not needed at runtime)
+test/**
+eslint.config.js
+.prettierrc
+.prettierignore
+.editorconfig

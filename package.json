@@ -1,6 +1,6 @@
 {
   "name": "ag-local-bridge",
-  "displayName": "AG Local Bridge",
+  "displayName": "Antigravity Local Bridge",
   "description": "Exposes the running Antigravity instance as a local OpenAI-compatible API on localhost:11435",
   "version": "1.0.0",
   "publisher": "marcodiniz",
@@ -22,6 +22,10 @@
     "antigravity",
     "openai",
     "opencode",
+    "claude",
+    "gemini",
+    "agent",
+    "llm",
     "bridge",
     "ai",
     "provider",
@@ -33,7 +37,20 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./extension.js",
+  "main": "./src/extension.js",
+  "scripts": {
+    "test": "node --require ./test/setup.js --test test/**/*.test.js",
+    "lint": "eslint src/ test/",
+    "lint:fix": "eslint src/ test/ --fix",
+    "format": "prettier --write \"src/**/*.js\" \"test/**/*.js\" \"*.json\" \"*.md\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"test/**/*.js\" \"*.json\" \"*.md\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "prettier": "^3.0.0"
+  },
   "contributes": {
     "configuration": {
       "title": "AG Local Bridge",
