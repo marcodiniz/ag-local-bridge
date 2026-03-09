@@ -1,5 +1,14 @@
 # AG (Antigravity) Local Bridge
 
+<p align="center">
+  <a href="https://open-vsx.org/extension/marcodiniz/ag-local-bridge"><img src="https://img.shields.io/open-vsx/v/marcodiniz/ag-local-bridge?logo=open-vsx&label=Open%20VSX&logoColor=white&color=blueviolet" alt="Open VSX Version"></a>
+  <a href="https://open-vsx.org/extension/marcodiniz/ag-local-bridge"><img src="https://img.shields.io/open-vsx/dt/marcodiniz/ag-local-bridge?color=success&label=downloads" alt="Open VSX Downloads"></a>
+  <a href="https://github.com/marcodiniz/ag-local-bridge/stargazers"><img src="https://img.shields.io/github/stars/marcodiniz/ag-local-bridge?style=flat&color=gold" alt="GitHub Stars"></a>
+  <a href="https://github.com/marcodiniz/ag-local-bridge/issues"><img src="https://img.shields.io/github/issues/marcodiniz/ag-local-bridge" alt="GitHub Issues"></a>
+  <a href="https://github.com/marcodiniz/ag-local-bridge/blob/master/LICENSE"><img src="https://img.shields.io/github/license/marcodiniz/ag-local-bridge?style=flat" alt="License"></a>
+  <a href="https://buymeacoffee.com/marcowm"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-marcowm-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me A Coffee"></a>
+</p>
+
 **Exposes your running [Antigravity](https://codeium.com/antigravity) instance as a local OpenAI-compatible API** on `localhost:11435`.
 
 Use your Antigravity subscription with any tool that speaks OpenAI — [opencode](https://opencode.ai), [aider](https://aider.chat), [continue.dev](https://continue.dev), or plain `curl`.
