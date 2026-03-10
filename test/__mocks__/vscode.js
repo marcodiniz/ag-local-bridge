@@ -36,6 +36,7 @@ module.exports = {
   commands: {
     registerCommand: () => ({ dispose: () => {} }),
     executeCommand: async () => {},
+    getCommands: async () => [],
   },
   extensions: {
     getExtension: () => null,

@@ -12,6 +12,27 @@ const { callSidecarChat } = require('../sidecar/cascade');
 // POST /v1/chat/completions
 // ─────────────────────────────────────────────
 
+async function dispatchViaAntigravityCommand(userMessage) {
+  const allCommands = await vscode.commands.getCommands(true);
+  const command = ['antigravity.executeCascadeAction'].find((candidate) => allCommands.includes(candidate));
+
+  if (!command) {
+    const relatedCommands = allCommands.filter(
+      (name) =>
+        name.toLowerCase().includes('antigravity') ||
+        name.toLowerCase().includes('jetski') ||
+        name.toLowerCase().includes('cascade'),
+    );
+    const sample = relatedCommands.slice(0, 8).join(', ') || 'none';
+    throw new Error(`No supported Antigravity command-dispatch command found. Related commands: ${sample}`);
+  }
+
+  await vscode.commands.executeCommand(command, {
+    type: 'sendMessage',
+    message: userMessage,
+  });
+}
+
 async function handleChatCompletions(ctx, req, res) {
   const body = await readBody(req);
   let payload;
@@ -156,10 +177,7 @@ async function _handleChatCompletionsInner(
       .map((m) => extractText(m.content))
       .join('\n');
     log(ctx, `⚠️ Falling back to Tier 2 command dispatch (sidecar unavailable)`);
-    await vscode.commands.executeCommand('antigravity.executeCascadeAction', {
-      type: 'sendMessage',
-      message: userMessage,
-    });
+    await dispatchViaAntigravityCommand(userMessage);
     const text = '[Message dispatched to Antigravity agent panel. Check the Antigravity chat panel for the response.]';
     if (isStream) {
       setupStreamResponse(res);

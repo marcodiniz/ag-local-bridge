@@ -6,7 +6,7 @@
 //
 // The sidecar (language_server_{platform}) runs a ConnectRPC server on a dynamic HTTPS port
 // with CSRF tokens. We discover these from the process command line at runtime.
-// Binary names: Windows=language_server_windows_x64.exe, macOS=language_server_macos, Linux=language_server_linux
+// Binary names: Windows=language_server_windows_x64.exe, macOS=language_server_macos, Linux=language_server_linux_x64
 
 'use strict';
 
