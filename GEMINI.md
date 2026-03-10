@@ -49,6 +49,8 @@ Key rules:
 
 ## Project Structure
 
+Always update this structure when files are changed.
+
 ```
 src/
   extension.js          # VS Code extension entry point
