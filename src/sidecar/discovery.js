@@ -20,13 +20,10 @@ const { log } = require('../utils');
 //   Linux   – ps aux + ss -tlnp
 // ─────────────────────────────────────────────
 
-/**
- * Binary name the Antigravity sidecar ships as, per platform.
- */
 const SIDECAR_BINARY_NAMES = {
-  win32: 'language_server_windows_x64.exe',
-  darwin: 'language_server_macos',
-  linux: 'language_server_linux',
+  win32: ['language_server_windows_x64.exe'],
+  darwin: ['language_server_macos_arm', 'language_server_macos'],
+  linux: ['language_server_linux'],
 };
 
 /**
@@ -45,7 +42,8 @@ const SIDECAR_BINARY_NAMES = {
 // Windows strategy  (PowerShell Get-CimInstance)
 // ─────────────────────────────────────────────
 
-function windowsStrategy(binaryName) {
+function windowsStrategy(binaryNames) {
+  const [binaryName] = binaryNames;
   return {
     async findProcess() {
       // Use Get-CimInstance Win32_Process (preferred over deprecated wmic)
@@ -87,13 +85,14 @@ function windowsStrategy(binaryName) {
 // macOS strategy  (ps aux + lsof)
 // ─────────────────────────────────────────────
 
-function darwinStrategy(binaryName) {
+function darwinStrategy(binaryNames) {
   return {
     async findProcess() {
       const { stdout } = await execFileAsync('/bin/ps', ['aux'], { encoding: 'utf8', timeout: 5000 });
 
-      // Find the line that contains the actual binary (skip the grep line)
-      const line = stdout.split('\n').find((l) => l.includes(binaryName) && !l.includes('grep'));
+      const line = stdout
+        .split('\n')
+        .find((l) => binaryNames.some((binaryName) => l.includes(binaryName)) && !l.includes('grep'));
       if (!line) return null;
 
       // ps aux columns: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND...
@@ -129,7 +128,8 @@ function darwinStrategy(binaryName) {
 // Linux strategy  (ps aux + ss)
 // ─────────────────────────────────────────────
 
-function linuxStrategy(binaryName) {
+function linuxStrategy(binaryNames) {
+  const [binaryName] = binaryNames;
   return {
     async findProcess() {
       const { stdout } = await execFileAsync('/bin/ps', ['aux'], { encoding: 'utf8', timeout: 5000 });
@@ -167,15 +167,11 @@ function linuxStrategy(binaryName) {
 // Strategy factory
 // ─────────────────────────────────────────────
 
-/**
- * Return the correct strategy for the current platform.
- * @returns {{ strategy: PlatformStrategy, binaryName: string }}
- */
-function getPlatformStrategy() {
-  const platform = os.platform();
-  const binaryName = SIDECAR_BINARY_NAMES[platform];
+function getPlatformStrategy(platformOverride = os.platform()) {
+  const platform = platformOverride;
+  const binaryNames = SIDECAR_BINARY_NAMES[platform];
 
-  if (!binaryName) {
+  if (!binaryNames) {
     throw new Error(`Unsupported platform for sidecar discovery: ${platform}`);
   }
 
@@ -185,7 +181,12 @@ function getPlatformStrategy() {
     linux: linuxStrategy,
   };
 
-  return { strategy: factories[platform](binaryName), binaryName };
+  return {
+    strategy: factories[platform](binaryNames),
+    binaryNames,
+    primaryBinaryName: binaryNames[0],
+    platform,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -196,12 +197,12 @@ async function discoverSidecar(ctx) {
   if (ctx.sidecarInfo && Date.now() - ctx.sidecarInfoTimestamp < ctx.SIDECAR_CACHE_TTL) return ctx.sidecarInfo;
 
   try {
-    const { strategy, binaryName } = getPlatformStrategy();
+    const { strategy, binaryNames, platform } = getPlatformStrategy();
 
     // 1. Find the sidecar process
     const proc = await strategy.findProcess();
     if (!proc) {
-      log(ctx, `⚠️ Sidecar process not found (looking for ${binaryName} on ${os.platform()})`);
+      log(ctx, `⚠️ Sidecar process not found (looking for ${binaryNames.join(', ')} on ${platform})`);
       return null;
     }
 
@@ -247,7 +248,7 @@ async function discoverSidecar(ctx) {
 
     log(
       ctx,
-      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
+      `✅ Sidecar discovered on ${platform}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
     );
     return ctx.sidecarInfo;
   } catch (err) {
@@ -256,4 +257,4 @@ async function discoverSidecar(ctx) {
   }
 }
 
-module.exports = { discoverSidecar, SIDECAR_BINARY_NAMES };
+module.exports = { discoverSidecar, SIDECAR_BINARY_NAMES, getPlatformStrategy };
