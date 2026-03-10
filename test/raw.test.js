@@ -22,17 +22,17 @@ describe('formatMessagesAsPrompt', () => {
   });
 
   it('includes tool definitions when tools are provided', () => {
-    const messages = [
-      { role: 'user', content: 'Read a file' },
-    ];
-    const tools = [{
-      type: 'function',
-      function: {
-        name: 'read_file',
-        description: 'Read a file',
-        parameters: { type: 'object', properties: { path: { type: 'string' } } },
+    const messages = [{ role: 'user', content: 'Read a file' }];
+    const tools = [
+      {
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Read a file',
+          parameters: { type: 'object', properties: { path: { type: 'string' } } },
+        },
       },
-    }];
+    ];
     const prompt = formatMessagesAsPrompt(messages, tools);
     assert.ok(prompt.includes('Available Tools'), 'Should contain tool header');
     assert.ok(prompt.includes('read_file'), 'Should contain tool name');
@@ -40,17 +40,21 @@ describe('formatMessagesAsPrompt', () => {
   });
 
   it('formats tool call history and tool results', () => {
-    const tools = [{
-      type: 'function',
-      function: { name: 'read_file', description: 'Read a file' },
-    }];
+    const tools = [
+      {
+        type: 'function',
+        function: { name: 'read_file', description: 'Read a file' },
+      },
+    ];
     const messages = [
       { role: 'system', content: 'You are a coding assistant.' },
       { role: 'user', content: 'Read package.json' },
       {
         role: 'assistant',
         content: '',
-        tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path": "package.json"}' } }],
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path": "package.json"}' } },
+        ],
       },
       { role: 'tool', tool_call_id: 'call_1', name: 'read_file', content: '{"name": "example"}' },
       { role: 'user', content: 'What is the name field?' },
@@ -72,7 +76,9 @@ describe('parseToolCalls', () => {
   });
 
   it('extracts a single tool call and strips it from content', () => {
-    const result = parseToolCalls('I\'ll read that file for you.\n<tool_call>{"name": "read_file", "arguments": {"path": "package.json"}}</tool_call>');
+    const result = parseToolCalls(
+      'I\'ll read that file for you.\n<tool_call>{"name": "read_file", "arguments": {"path": "package.json"}}</tool_call>',
+    );
     assert.equal(result.content, "I'll read that file for you.");
     assert.ok(result.toolCalls !== null);
     assert.equal(result.toolCalls.length, 1);
@@ -83,8 +89,8 @@ describe('parseToolCalls', () => {
   it('extracts multiple tool calls', () => {
     const result = parseToolCalls(
       '<tool_call>{"name": "read_file", "arguments": {"path": "a.js"}}</tool_call>\n' +
-      '<tool_call>{"name": "read_file", "arguments": {"path": "b.js"}}</tool_call>\n' +
-      'Let me look at both files.',
+        '<tool_call>{"name": "read_file", "arguments": {"path": "b.js"}}</tool_call>\n' +
+        'Let me look at both files.',
     );
     assert.equal(result.toolCalls.length, 2);
     assert.equal(result.content, 'Let me look at both files.');
