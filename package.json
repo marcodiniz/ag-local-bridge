@@ -2,7 +2,7 @@
   "name": "ag-local-bridge",
   "displayName": "Antigravity Local Bridge",
   "description": "Exposes the running Antigravity instance as a local OpenAI-compatible API on localhost:11435",
-  "version": "1.0.0",
+  "version": "1.0.7",
   "publisher": "marcodiniz",
   "license": "MIT",
   "icon": "./icon.png",
