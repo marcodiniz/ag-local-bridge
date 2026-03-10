@@ -21,18 +21,19 @@ const { log } = require('../utils');
 // ─────────────────────────────────────────────
 
 /**
- * Binary name the Antigravity sidecar ships as, per platform.
+ * Binary names the Antigravity sidecar has shipped as, per platform.
  */
 const SIDECAR_BINARY_NAMES = {
-  win32: 'language_server_windows_x64.exe',
-  darwin: 'language_server_macos',
-  linux: 'language_server_linux',
+  win32: ['language_server_windows_x64.exe'],
+  darwin: ['language_server_macos'],
+  linux: ['language_server_linux_x64', 'language_server_linux'],
 };
 
 /**
  * @typedef {Object} ProcessInfo
  * @property {string} pid
  * @property {string} commandLine
+ * @property {string} user
  */
 
 /**
@@ -41,28 +42,60 @@ const SIDECAR_BINARY_NAMES = {
  * @property {(pid: string) => Promise<number[]>} findListeningPorts
  */
 
+function rankProcessCandidate(proc) {
+  const user = (() => {
+    try {
+      return os.userInfo().username;
+    } catch {
+      return null;
+    }
+  })();
+
+  let score = 0;
+  if (proc.commandLine.includes('/resources/app/extensions/antigravity/bin/')) score += 100;
+  if (proc.commandLine.includes('--extension_server_csrf_token')) score += 50;
+  if (proc.commandLine.includes('--random_port')) score += 20;
+  if (proc.commandLine.includes('--server_port')) score += 10;
+  if (user && proc.user === user) score += 30;
+  if (proc.commandLine.startsWith('/usr/local/bin/')) score -= 40;
+  return score;
+}
+
+function chooseBestProcess(candidates) {
+  if (!candidates || candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => rankProcessCandidate(b) - rankProcessCandidate(a))[0];
+}
+
 // ─────────────────────────────────────────────
 // Windows strategy  (PowerShell Get-CimInstance)
 // ─────────────────────────────────────────────
 
-function windowsStrategy(binaryName) {
+function windowsStrategy(binaryNames) {
   return {
     async findProcess() {
-      // Use Get-CimInstance Win32_Process (preferred over deprecated wmic)
-      const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | Format-List`;
-      const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
-        encoding: 'utf8',
-        timeout: 10000,
-      });
+      for (const binaryName of binaryNames) {
+        // Use Get-CimInstance Win32_Process (preferred over deprecated wmic)
+        const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | Format-List`;
+        const { stdout } = await execFileAsync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+          {
+            encoding: 'utf8',
+            timeout: 10000,
+          },
+        );
 
-      if (!stdout || !stdout.trim()) return null;
+        if (!stdout || !stdout.trim()) continue;
 
-      const pidMatch = stdout.match(/ProcessId\s*:\s*(\d+)/);
-      const cmdMatch = stdout.match(/CommandLine\s*:\s*(.+)/);
+        const pidMatch = stdout.match(/ProcessId\s*:\s*(\d+)/);
+        const cmdMatch = stdout.match(/CommandLine\s*:\s*(.+)/);
 
-      if (!pidMatch || !cmdMatch) return null;
+        if (pidMatch && cmdMatch) {
+          return { pid: pidMatch[1], commandLine: cmdMatch[1].trim(), user: '' };
+        }
+      }
 
-      return { pid: pidMatch[1], commandLine: cmdMatch[1].trim() };
+      return null;
     },
 
     async findListeningPorts(pid) {
@@ -87,22 +120,25 @@ function windowsStrategy(binaryName) {
 // macOS strategy  (ps aux + lsof)
 // ─────────────────────────────────────────────
 
-function darwinStrategy(binaryName) {
+function darwinStrategy(binaryNames) {
   return {
     async findProcess() {
       const { stdout } = await execFileAsync('/bin/ps', ['aux'], { encoding: 'utf8', timeout: 5000 });
 
-      // Find the line that contains the actual binary (skip the grep line)
-      const line = stdout.split('\n').find((l) => l.includes(binaryName) && !l.includes('grep'));
-      if (!line) return null;
+      const candidates = stdout
+        .split('\n')
+        .filter((l) => binaryNames.some((binaryName) => l.includes(binaryName)) && !l.includes('grep'))
+        .map((line) => {
+          const parts = line.trim().split(/\s+/);
+          return {
+            user: parts[0],
+            pid: parts[1],
+            commandLine: parts.slice(10).join(' '),
+          };
+        })
+        .filter((proc) => proc.pid && proc.commandLine);
 
-      // ps aux columns: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND...
-      const parts = line.trim().split(/\s+/);
-      const pid = parts[1];
-      // Reconstruct full command line from column 10 onward
-      const commandLine = parts.slice(10).join(' ');
-
-      return { pid, commandLine };
+      return chooseBestProcess(candidates);
     },
 
     async findListeningPorts(pid) {
@@ -129,19 +165,25 @@ function darwinStrategy(binaryName) {
 // Linux strategy  (ps aux + ss)
 // ─────────────────────────────────────────────
 
-function linuxStrategy(binaryName) {
+function linuxStrategy(binaryNames) {
   return {
     async findProcess() {
       const { stdout } = await execFileAsync('/bin/ps', ['aux'], { encoding: 'utf8', timeout: 5000 });
 
-      const line = stdout.split('\n').find((l) => l.includes(binaryName) && !l.includes('grep'));
-      if (!line) return null;
+      const candidates = stdout
+        .split('\n')
+        .filter((l) => binaryNames.some((binaryName) => l.includes(binaryName)) && !l.includes('grep'))
+        .map((line) => {
+          const parts = line.trim().split(/\s+/);
+          return {
+            user: parts[0],
+            pid: parts[1],
+            commandLine: parts.slice(10).join(' '),
+          };
+        })
+        .filter((proc) => proc.pid && proc.commandLine);
 
-      const parts = line.trim().split(/\s+/);
-      const pid = parts[1];
-      const commandLine = parts.slice(10).join(' ');
-
-      return { pid, commandLine };
+      return chooseBestProcess(candidates);
     },
 
     async findListeningPorts(pid) {
@@ -169,13 +211,13 @@ function linuxStrategy(binaryName) {
 
 /**
  * Return the correct strategy for the current platform.
- * @returns {{ strategy: PlatformStrategy, binaryName: string }}
+ * @returns {{ strategy: PlatformStrategy, binaryNames: string[] }}
  */
 function getPlatformStrategy() {
   const platform = os.platform();
-  const binaryName = SIDECAR_BINARY_NAMES[platform];
+  const binaryNames = SIDECAR_BINARY_NAMES[platform];
 
-  if (!binaryName) {
+  if (!binaryNames) {
     throw new Error(`Unsupported platform for sidecar discovery: ${platform}`);
   }
 
@@ -185,7 +227,7 @@ function getPlatformStrategy() {
     linux: linuxStrategy,
   };
 
-  return { strategy: factories[platform](binaryName), binaryName };
+  return { strategy: factories[platform](binaryNames), binaryNames };
 }
 
 // ─────────────────────────────────────────────
@@ -196,12 +238,12 @@ async function discoverSidecar(ctx) {
   if (ctx.sidecarInfo && Date.now() - ctx.sidecarInfoTimestamp < ctx.SIDECAR_CACHE_TTL) return ctx.sidecarInfo;
 
   try {
-    const { strategy, binaryName } = getPlatformStrategy();
+    const { strategy, binaryNames } = getPlatformStrategy();
 
     // 1. Find the sidecar process
     const proc = await strategy.findProcess();
     if (!proc) {
-      log(ctx, `⚠️ Sidecar process not found (looking for ${binaryName} on ${os.platform()})`);
+      log(ctx, `⚠️ Sidecar process not found (looking for ${binaryNames.join(', ')} on ${os.platform()})`);
       return null;
     }
 
@@ -211,6 +253,8 @@ async function discoverSidecar(ctx) {
     const extPortMatch = commandLine.match(/--extension_server_port\s+(\d+)/);
     const extCsrfMatch = commandLine.match(/--extension_server_csrf_token\s+([a-f0-9-]+)/);
     const mainCsrfMatch = commandLine.match(/--csrf_token\s+([a-f0-9-]+)/);
+    const serverPortMatch = commandLine.match(/--server_port\s+(\d+)/);
+    const lspPortMatch = commandLine.match(/--lsp_port[= ](\d+)/);
 
     if (!extPortMatch) {
       log(ctx, '⚠️ Could not find sidecar extension_server_port');
@@ -234,7 +278,11 @@ async function discoverSidecar(ctx) {
     if (extCsrfMatch) csrfTokens.push(extCsrfMatch[1]);
 
     // 6. Collect ports (extension_server_port first, then any discovered listening ports)
-    const portsToTry = [...new Set([parseInt(extPortMatch[1]), ...actualPorts])];
+    const portsToTry = [
+      ...new Set(
+        [parseInt(extPortMatch[1]), serverPortMatch && parseInt(serverPortMatch[1]), lspPortMatch && parseInt(lspPortMatch[1]), ...actualPorts].filter(Boolean),
+      ),
+    ];
 
     ctx.sidecarInfo = {
       extensionServerPort: parseInt(extPortMatch[1]),
