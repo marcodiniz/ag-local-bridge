@@ -42,9 +42,9 @@ jobs:
       - name: Install ovsx
         run: npm install -g ovsx @vscode/vsce
 
-      - name: Auto-version (1.0.{run_number})
+      - name: Auto-version (1.1.{run_number})
         run: |
-          VERSION="1.0.${{ github.run_number }}"
+          VERSION="1.1.${{ github.run_number }}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           npm version "$VERSION" --no-git-tag-version
           echo "📦  Version: $VERSION"
