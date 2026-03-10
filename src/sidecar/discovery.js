@@ -26,7 +26,7 @@ const { log } = require('../utils');
 const SIDECAR_BINARY_NAMES = {
   win32: ['language_server_windows_x64.exe'],
   darwin: ['language_server_macos_arm', 'language_server_macos'],
-  linux: ['language_server_linux_x64', 'language_server_linux'],
+  linux: ['language_server_linux'],
 };
 
 /**
@@ -206,11 +206,12 @@ function linuxStrategy(binaryNames) {
 // ─────────────────────────────────────────────
 
 /**
- * Return the correct strategy for the current platform.
- * @returns {{ strategy: PlatformStrategy, binaryNames: string[] }}
+ * Return the correct strategy for the given (or current) platform.
+ * @param {string} [platformOverride] - Optional platform string; defaults to os.platform().
+ * @returns {{ strategy: PlatformStrategy, binaryNames: string[], primaryBinaryName: string, platform: string }}
  */
-function getPlatformStrategy() {
-  const platform = os.platform();
+function getPlatformStrategy(platformOverride) {
+  const platform = platformOverride || os.platform();
   const binaryNames = SIDECAR_BINARY_NAMES[platform];
 
   if (!binaryNames) {
@@ -223,7 +224,12 @@ function getPlatformStrategy() {
     linux: linuxStrategy,
   };
 
-  return { strategy: factories[platform](binaryNames), binaryNames };
+  return {
+    strategy: factories[platform](binaryNames),
+    binaryNames,
+    primaryBinaryName: binaryNames[0],
+    platform,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -296,7 +302,7 @@ async function discoverSidecar(ctx) {
 
     log(
       ctx,
-      `✅ Sidecar discovered on ${platform}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
+      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
     );
     return ctx.sidecarInfo;
   } catch (err) {

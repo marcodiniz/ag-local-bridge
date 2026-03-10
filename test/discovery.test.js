@@ -63,8 +63,8 @@ describe('discoverSidecar platform dispatch', () => {
       ss: {
         stdout:
           'State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess\n' +
-          'LISTEN 0      511        127.0.0.1:40759      0.0.0.0:*    users:((\"language_server_linux_x64\",pid=616032,fd=30))\n' +
-          'LISTEN 0      511        127.0.0.1:39201      0.0.0.0:*    users:((\"language_server_linux_x64\",pid=616032,fd=31))\n',
+          'LISTEN 0      511        127.0.0.1:40759      0.0.0.0:*    users:(("language_server_linux_x64",pid=616032,fd=30))\n' +
+          'LISTEN 0      511        127.0.0.1:39201      0.0.0.0:*    users:(("language_server_linux_x64",pid=616032,fd=31))\n',
       },
     });
 
@@ -92,9 +92,9 @@ describe('discoverSidecar platform dispatch', () => {
       ss: {
         stdout:
           'State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess\n' +
-          'LISTEN 0      511        127.0.0.1:46237      0.0.0.0:*    users:((\"antigravity\",pid=639041,fd=48))\n' +
-          'LISTEN 0      4096       127.0.0.1:43405      0.0.0.0:*    users:((\"language_server\",pid=639160,fd=9))\n' +
-          'LISTEN 0      4096       127.0.0.1:40935      0.0.0.0:*    users:((\"language_server\",pid=639160,fd=10))\n',
+          'LISTEN 0      511        127.0.0.1:46237      0.0.0.0:*    users:(("antigravity",pid=639041,fd=48))\n' +
+          'LISTEN 0      4096       127.0.0.1:43405      0.0.0.0:*    users:(("language_server",pid=639160,fd=9))\n' +
+          'LISTEN 0      4096       127.0.0.1:40935      0.0.0.0:*    users:(("language_server",pid=639160,fd=10))\n',
       },
     });
 
