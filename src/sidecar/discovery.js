@@ -25,7 +25,7 @@ const { log } = require('../utils');
  */
 const SIDECAR_BINARY_NAMES = {
   win32: ['language_server_windows_x64.exe'],
-  darwin: ['language_server_macos'],
+  darwin: ['language_server_macos_arm', 'language_server_macos'],
   linux: ['language_server_linux_x64', 'language_server_linux'],
 };
 
@@ -76,14 +76,10 @@ function windowsStrategy(binaryNames) {
       for (const binaryName of binaryNames) {
         // Use Get-CimInstance Win32_Process (preferred over deprecated wmic)
         const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | Format-List`;
-        const { stdout } = await execFileAsync(
-          'powershell.exe',
-          ['-NoProfile', '-NonInteractive', '-Command', psCmd],
-          {
-            encoding: 'utf8',
-            timeout: 10000,
-          },
-        );
+        const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+          encoding: 'utf8',
+          timeout: 10000,
+        });
 
         if (!stdout || !stdout.trim()) continue;
 
@@ -280,7 +276,12 @@ async function discoverSidecar(ctx) {
     // 6. Collect ports (extension_server_port first, then any discovered listening ports)
     const portsToTry = [
       ...new Set(
-        [parseInt(extPortMatch[1]), serverPortMatch && parseInt(serverPortMatch[1]), lspPortMatch && parseInt(lspPortMatch[1]), ...actualPorts].filter(Boolean),
+        [
+          parseInt(extPortMatch[1]),
+          serverPortMatch && parseInt(serverPortMatch[1]),
+          lspPortMatch && parseInt(lspPortMatch[1]),
+          ...actualPorts,
+        ].filter(Boolean),
       ),
     ];
 
@@ -295,7 +296,7 @@ async function discoverSidecar(ctx) {
 
     log(
       ctx,
-      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
+      `✅ Sidecar discovered on ${platform}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
     );
     return ctx.sidecarInfo;
   } catch (err) {
@@ -304,4 +305,4 @@ async function discoverSidecar(ctx) {
   }
 }
 
-module.exports = { discoverSidecar, SIDECAR_BINARY_NAMES };
+module.exports = { discoverSidecar, SIDECAR_BINARY_NAMES, getPlatformStrategy };

@@ -2,6 +2,13 @@
 
 All notable changes to the **AG Local Bridge** extension will be documented in this file.
 
+## [1.0.7] - 2026-03-10
+
+### Fixed
+
+- Hardened macOS sidecar discovery to recognize Apple Silicon sidecar binary names explicitly.
+- Packaged release version bump for the macOS discovery fix.
+
 ## [1.0.0] - 2026-03-08
 
 ### Added
