@@ -1,5 +1,7 @@
 'use strict';
 
+const { randomUUID } = require('crypto');
+
 /**
  * Shared mutable state for the AG Local Bridge extension.
  *
@@ -9,6 +11,10 @@
  */
 function createContext() {
   return {
+    // Identity (for Metadata proto payloads)
+    sessionId: randomUUID(),
+    extensionVersion: '1.1.0',
+
     // VS Code UI
     /** @type {import('vscode').OutputChannel | null} */
     outputChannel: null,

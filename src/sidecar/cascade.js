@@ -4,10 +4,25 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { log } = require('../utils');
+const { log, verboseLog } = require('../utils');
 const { extractText } = require('../images');
 const { discoverSidecar } = require('./discovery');
 const { makeH2JsonCall, makeH2StreamingCall } = require('./rpc');
+
+// ─────────────────────────────────────────────
+// Proto-compatible Metadata builder
+// Matches exa.codeium_common_pb.Metadata
+// ─────────────────────────────────────────────
+
+function buildMetadata(ctx) {
+  return {
+    ideName: 'antigravity',
+    extensionName: 'antigravity',
+    extensionVersion: '0.2.0',
+    os: process.platform,
+    sessionId: ctx.sessionId || '',
+  };
+}
 
 // ─────────────────────────────────────────────
 // Cascade Conversations
@@ -37,12 +52,7 @@ async function callSidecarChat(
     .map((m) => extractText(m.content))
     .join('\n');
   const mainCsrf = info.csrfTokens[0];
-  const flog = (msg) => {
-    log(ctx, msg);
-    try {
-      fs.appendFileSync(path.join(os.tmpdir(), 'ag-bridge-debug.log'), `[${new Date().toISOString()}] ${msg}\n`);
-    } catch {}
-  };
+  const vlog = (msg) => verboseLog(ctx, msg);
 
   // Save images to temp files so the agent can view them with its tools
   const savedImagePaths = [];
@@ -60,16 +70,16 @@ async function callSidecarChat(
       try {
         fs.writeFileSync(filePath, Buffer.from(img.base64Data, 'base64'));
         savedImagePaths.push(filePath);
-        flog(`  🖼️ Saved image ${i + 1} to: ${filePath}`);
+        log(ctx, `  🖼️ Saved image ${i + 1} to: ${filePath}`);
       } catch (e) {
-        flog(`  ⚠️ Failed to save image: ${e.message}`);
+        log(ctx, `  ⚠️ Failed to save image: ${e.message}`);
       }
     }
     // Prepend image references to the user message so the agent knows to look at them
     if (savedImagePaths.length > 0) {
       const imageRefs = savedImagePaths.map((p, i) => `[Attached Image ${i + 1}]: ${p.replace(/\\/g, '/')}`).join('\n');
       userMessage = `${imageRefs}\n\n${userMessage}`;
-      flog(`  🖼️ Prepended ${savedImagePaths.length} image path(s) to message`);
+      vlog(`  🖼️ Prepended ${savedImagePaths.length} image path(s) to message`);
     }
   }
 
@@ -82,7 +92,7 @@ async function callSidecarChat(
       lsPort = port;
       break;
     } catch (e) {
-      flog(`  port ${port} failed: ${e.message.substring(0, 40)}`);
+      vlog(`  port ${port} failed: ${e.message.substring(0, 40)}`);
     }
   }
   if (!lsPort) throw new Error('No reachable LS port');
@@ -95,22 +105,22 @@ async function callSidecarChat(
   const RETRY_DELAY_MS = 10000;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (attempt > 0) {
-      flog(`  ⏳ Retry ${attempt + 1}/${MAX_RETRIES} after ${RETRY_DELAY_MS / 1000}s backoff...`);
+      log(ctx, `  ⏳ Retry ${attempt + 1}/${MAX_RETRIES} after ${RETRY_DELAY_MS / 1000}s backoff...`);
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     }
 
     // --- CONVERSATION MULTIPLEXING ---
     if (ctx.cascadePromises.has(convKey)) {
-      flog(`  ♻️ Awaiting concurrent cascade creation for conv: ${convKey.replace(/\n/g, '')}...`);
+      vlog(`  ♻️ Awaiting concurrent cascade creation for conv: ${convKey.replace(/\n/g, '')}...`);
       cascadeId = await ctx.cascadePromises.get(convKey);
-      flog(`  ♻️ Concurrently Reused cascade: ${cascadeId.substring(0, 8)}`);
+      vlog(`  ♻️ Concurrently Reused cascade: ${cascadeId.substring(0, 8)}`);
     } else if (
       ctx.activeCascades.has(convKey) &&
       Date.now() - ctx.activeCascades.get(convKey).lastUsed < 1000 * 60 * 60 * 4
     ) {
       cascadeId = ctx.activeCascades.get(convKey).id;
       ctx.activeCascades.get(convKey).lastUsed = Date.now();
-      flog(`  ♻️ Reused existing conversation: ${cascadeId.substring(0, 8)}`);
+      vlog(`  ♻️ Reused existing conversation: ${cascadeId.substring(0, 8)}`);
     } else {
       // Must create a new Cascade. Lock the workspace globally to prevent race conditions across parallel conversations!
       const promise = (async () => {
@@ -133,21 +143,23 @@ async function callSidecarChat(
                 name: path.basename(workspaceDir),
               });
               if (success) {
-                flog(`  📂 Switched workspace strictly to: ${workspaceDir}`);
+                vlog(`  📂 Switched workspace strictly to: ${workspaceDir}`);
                 await new Promise((r) => setTimeout(r, 1000)); // Crucial LSP propagation delay
               } else {
-                flog(`  ⚠️ updateWorkspaceFolders failed`);
+                log(ctx, `  ⚠️ updateWorkspaceFolders failed`);
                 originalFolders = null;
               }
             } else {
-              flog(`  📂 Workspace already exclusively correct: ${workspaceDir}`);
+              vlog(`  📂 Workspace already exclusively correct: ${workspaceDir}`);
             }
           }
 
-          const startPayload = {};
+          const startPayload = {
+            metadata: buildMetadata(ctx),
+            source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT',
+          };
           if (workspaceUri) {
-            startPayload.workspacePaths = [workspaceUri];
-            startPayload.workspaceRootPath = workspaceDir;
+            startPayload.workspaceUris = [workspaceUri];
           }
           const startResult = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'StartCascade', startPayload);
           const newId = startResult && startResult.cascadeId;
@@ -155,7 +167,7 @@ async function callSidecarChat(
           if (originalFolders && originalFolders.length > 0) {
             const current = vscode.workspace.workspaceFolders || [];
             vscode.workspace.updateWorkspaceFolders(0, current.length, ...originalFolders);
-            flog(`  ♻️ Restored ${originalFolders.length} workspace folders`);
+            vlog(`  ♻️ Restored ${originalFolders.length} workspace folders`);
           }
 
           if (!newId) throw new Error('StartCascade failed to return cascadeId');
@@ -169,7 +181,7 @@ async function callSidecarChat(
       try {
         cascadeId = await promise;
         ctx.activeCascades.set(convKey, { id: cascadeId, lastUsed: Date.now() });
-        flog(`  🆕 New Cascade created: ${cascadeId.substring(0, 8)} (attempt ${attempt + 1})`);
+        log(ctx, `  🆕 New Cascade created: ${cascadeId.substring(0, 8)} (attempt ${attempt + 1})`);
       } catch (err) {
         ctx.cascadePromises.delete(convKey);
         throw err;
@@ -179,16 +191,19 @@ async function callSidecarChat(
     }
 
     // Send message
-    const conversationalConfig = {};
+    const conversationalConfig = { agenticMode: false };
     if (workspaceUri) {
       conversationalConfig.overrideWorkspaceDirExperimentalUseOnly = workspaceUri;
     }
     const sendPayload = {
       cascadeId,
       items: [{ text: userMessage }],
+      metadata: buildMetadata(ctx),
+      clientType: 'CHAT_CLIENT_REQUEST_STREAM_CLIENT_TYPE_IDE',
+      messageOrigin: 'AGENT_MESSAGE_ORIGIN_IDE',
       cascadeConfig: {
         plannerConfig: {
-          plannerTypeConfig: { conversational: conversationalConfig },
+          conversational: conversationalConfig,
           requestedModel: { model: modelValue },
         },
       },
@@ -196,19 +211,14 @@ async function callSidecarChat(
     // NOTE: images are handled via temp files — paths are prepended to userMessage above.
     // The proto `images`/`media` fields cause HTTP 400 unmarshal errors, so we don't send them.
     if (images && images.length > 0) {
-      flog(`  🖼️ ${images.length} image(s) referenced as temp file paths in message text`);
-    }
-    // Also add workspace paths at top level using file URI format
-    if (workspaceUri) {
-      sendPayload.workspacePaths = [workspaceUri];
-      sendPayload.workspacePathsMigrateMeToUris = [workspaceUri];
+      vlog(`  🖼️ ${images.length} image(s) referenced as temp file paths in message text`);
     }
     try {
       await makeH2StreamingCall(lsPort, mainCsrf, info.certPath, 'SendUserCascadeMessage', sendPayload);
-      flog(`  ✅ SendUserCascadeMessage dispatched (attempt ${attempt + 1})`);
-      flog(`  📦 Payload: ${JSON.stringify(sendPayload).substring(0, 1000)}`);
+      log(ctx, `  ✅ SendUserCascadeMessage dispatched (attempt ${attempt + 1})`);
+      vlog(`  📦 Payload: ${JSON.stringify(sendPayload).substring(0, 1000)}`);
     } catch (e) {
-      flog(`  ⚠️ SendUserCascadeMessage failed: ${e.message.substring(0, 60)}`);
+      log(ctx, `  ⚠️ SendUserCascadeMessage failed: ${e.message.substring(0, 60)}`);
       ctx.activeCascades.delete(convKey);
       continue; // retry with fresh cascade
     }
@@ -224,7 +234,7 @@ async function callSidecarChat(
         const traj = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetCascadeTrajectory', { cascadeId });
         const steps = (traj && traj.trajectory && traj.trajectory.steps) || [];
         const status = traj && traj.status;
-        flog(`  [poll ${elapsed}s] steps=${steps.length} status=${status}`);
+        vlog(`  [poll ${elapsed}s] steps=${steps.length} status=${status}`);
 
         if (steps.length > 0 && status === 'CASCADE_RUN_STATUS_IDLE') {
           // Look for response text in PLANNER_RESPONSE steps
@@ -234,7 +244,7 @@ async function callSidecarChat(
             if (!pr) continue;
             const text = pr.modifiedResponse || pr.response || pr.content || pr.thinking;
             if (text && text.trim().length >= 3) {
-              flog(`✅ Response ready (${text.length} chars, attempt ${attempt + 1})`);
+              log(ctx, `✅ Response ready (${text.length} chars, attempt ${attempt + 1})`);
               return text.trim();
             }
           }
@@ -248,18 +258,18 @@ async function callSidecarChat(
                   .includes('capacity'),
             )
           ) {
-            flog(`  ⚠️ Capacity error (attempt ${attempt + 1}), will retry...`);
+            log(ctx, `  ⚠️ Capacity error (attempt ${attempt + 1}), will retry...`);
             ctx.activeCascades.delete(convKey);
             shouldRetry = true;
           } else {
-            flog(`  ⚠️ IDLE with no PLANNER_RESPONSE after ${elapsed}s`);
+            log(ctx, `  ⚠️ IDLE with no PLANNER_RESPONSE after ${elapsed}s`);
             ctx.activeCascades.delete(convKey);
             shouldRetry = false; // Fail fast to Tier 2 instead of spamming duplicates
           }
           break;
         }
       } catch (e) {
-        flog(`  [poll error] ${e.message.substring(0, 80)}`);
+        vlog(`  [poll error] ${e.message.substring(0, 80)}`);
       }
     }
     if (!shouldRetry) break;

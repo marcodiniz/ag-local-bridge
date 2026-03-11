@@ -2,7 +2,15 @@
 
 const vscode = require('vscode');
 const { randomUUID } = require('crypto');
-const { log, sendJson, setupStreamResponse, readBody, buildStreamChunk, buildCompletion } = require('../utils');
+const {
+  log,
+  verboseLog,
+  sendJson,
+  setupStreamResponse,
+  readBody,
+  buildStreamChunk,
+  buildCompletion,
+} = require('../utils');
 const { extractText, extractAllImages } = require('../images');
 const { resolveModel } = require('../models');
 const { resolveWorkspace } = require('../workspace');
@@ -53,8 +61,8 @@ async function handleChatCompletions(ctx, req, res) {
     return sendJson(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request' } });
   }
 
-  // Debug: log incoming request payload
-  log(ctx, `📥 Request body (${body.length} bytes): ${body.substring(0, 500)}`);
+  // Debug: log incoming request payload (verbose only)
+  verboseLog(ctx, `📥 Request body (${body.length} bytes): ${body.substring(0, 500)}`);
 
   const isStream = payload.stream === true;
   const messages = payload.messages || [];

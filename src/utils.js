@@ -19,6 +19,12 @@ function log(ctx, msg, isError = false) {
   if (isError) console.error(`[ag-bridge] ${msg}`);
 }
 
+/** Log only when agLocalBridge.logRequests is enabled (verbose/debug output) */
+function verboseLog(ctx, msg) {
+  const config = vscode.workspace.getConfiguration('agLocalBridge');
+  if (config.get('logRequests', false)) log(ctx, msg);
+}
+
 // ─────────────────────────────────────────────
 // Status Bar
 // ─────────────────────────────────────────────
@@ -93,6 +99,7 @@ function buildCompletion(id, model, content) {
 
 module.exports = {
   log,
+  verboseLog,
   updateStatusBar,
   setupStreamResponse,
   sendJson,

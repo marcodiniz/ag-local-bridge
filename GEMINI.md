@@ -97,6 +97,25 @@ scripts/
 - Mock VS Code API via `test/__mocks__/vscode.js` (loaded by `test/setup.js`).
 - **Do not use `console.assert`** — use `assert` from `node:assert/strict`.
 
+## Logging Conventions
+
+Two logging helpers live in `src/utils.js`:
+
+| Helper                 | When to use                                                              |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `log(ctx, msg)`        | Essential operational info (cascade created, request dispatched, errors) |
+| `verboseLog(ctx, msg)` | Payloads, polling ticks, workspace switches, debug detail                |
+
+`verboseLog` is **gated behind the `agLocalBridge.logRequests` setting** — it produces
+no output unless the user explicitly opts in.
+
+Key rules:
+
+- **Never write logs to files** (`fs.appendFileSync`, `fs.writeFileSync` for logs) — all
+  logging goes through the VS Code Output channel only.
+- **Never use `console.log`** — use `log()` or `verboseLog()`.
+- **Never dump full request/response bodies** in `log()` — use `verboseLog()` for those.
+
 ## Architecture Notes
 
 ### Sidecar Discovery (`src/sidecar/discovery.js`)
