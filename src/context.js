@@ -12,7 +12,7 @@ const { randomUUID } = require('crypto');
 function createContext() {
   return {
     // Identity (for Metadata proto payloads)
-    sessionId: randomUUID(),
+    sessionId: randomUUID() + Date.now().toString(),
     extensionVersion: '1.1.0',
 
     // VS Code UI
