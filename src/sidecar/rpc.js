@@ -89,6 +89,81 @@ function _makeH2JsonCallOnce(port, csrf, certPath, method, body) {
   });
 }
 
+/** Make a H2+Proto ConnectRPC call to the LanguageServerService (binary protobuf) */
+async function makeH2ProtoCall(port, csrf, certPath, method, protoBytes, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes);
+    } catch (e) {
+      if (attempt < retries && (e.message.includes('H2 connect:') || e.message.includes('H2 timeout'))) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+function _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes) {
+  return new Promise((resolve, reject) => {
+    let ca;
+    try {
+      ca = certPath ? fs.readFileSync(certPath) : undefined;
+    } catch {
+      /* ignore */
+    }
+    const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
+    const chunks = [];
+    let status;
+    let settled = false;
+    const settle = (fn, val) => {
+      if (!settled) {
+        settled = true;
+        fn(val);
+      }
+    };
+    client.on('error', (err) => {
+      settle(reject, new Error('H2 connect: ' + err.message));
+    });
+    client.on('connect', () => {
+      const req = client.request({
+        ':method': 'POST',
+        ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
+        'content-type': 'application/proto',
+        'connect-protocol-version': '1',
+        'x-codeium-csrf-token': csrf,
+      });
+      req.on('response', (h) => {
+        status = h[':status'];
+      });
+      req.on('data', (d) => {
+        chunks.push(d);
+      });
+      req.on('end', () => {
+        client.close();
+        const body = Buffer.concat(chunks);
+        if (status === 200) {
+          settle(resolve, new Uint8Array(body));
+        } else {
+          settle(reject, new Error(`HTTP ${status}: ${body.toString('utf8').substring(0, 150)}`));
+        }
+      });
+      req.on('error', (e) => {
+        client.close();
+        settle(reject, e);
+      });
+      req.write(Buffer.from(protoBytes));
+      req.end();
+    });
+    setTimeout(() => {
+      try {
+        client.close();
+      } catch {}
+      settle(reject, new Error('H2 timeout'));
+    }, 10000);
+  });
+}
+
 /** Make a streaming H2+JSON ConnectRPC call to the LanguageServerService (for SendUserCascadeMessage etc.) */
 function makeH2StreamingCall(port, csrf, certPath, method, body) {
   const payload = JSON.stringify(body);
@@ -149,6 +224,70 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
         else reject(e);
       });
       req.write(payload);
+      req.end();
+    });
+  });
+}
+
+/** Make a streaming H2+Proto ConnectRPC call (binary protobuf) */
+function makeH2ProtoStreamingCall(port, csrf, certPath, method, protoBytes) {
+  return new Promise((resolve, reject) => {
+    let ca;
+    try {
+      ca = certPath ? fs.readFileSync(certPath) : undefined;
+    } catch {
+      /* ignore */
+    }
+    const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
+    let status;
+    const chunks = [];
+
+    const timer = setTimeout(() => {
+      try {
+        client.close();
+      } catch {}
+      resolve();
+    }, 30000);
+
+    client.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error('H2 connect: ' + err.message));
+    });
+
+    client.on('connect', () => {
+      const req = client.request({
+        ':method': 'POST',
+        ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
+        'content-type': 'application/proto',
+        'connect-protocol-version': '1',
+        'x-codeium-csrf-token': csrf,
+      });
+      req.on('response', (h) => {
+        status = h[':status'];
+      });
+      req.on('data', (d) => {
+        chunks.push(d);
+      });
+      req.on('end', () => {
+        clearTimeout(timer);
+        try {
+          client.close();
+        } catch {}
+        if (status === 200) resolve();
+        else {
+          const body = Buffer.concat(chunks).toString('utf8');
+          reject(new Error(`HTTP ${status}: ${body.substring(0, 150)}`));
+        }
+      });
+      req.on('error', (e) => {
+        clearTimeout(timer);
+        try {
+          client.close();
+        } catch {}
+        if (status === 200 || chunks.length > 0) resolve();
+        else reject(e);
+      });
+      req.write(Buffer.from(protoBytes));
       req.end();
     });
   });
@@ -244,5 +383,7 @@ function makeConnectRpcCallOnPort(port, csrf, certPath, servicePath, payload) {
 module.exports = {
   makeH2JsonCall,
   makeH2StreamingCall,
+  makeH2ProtoCall,
+  makeH2ProtoStreamingCall,
   makeConnectRpcCallOnPort,
 };

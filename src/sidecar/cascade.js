@@ -7,7 +7,8 @@ const os = require('os');
 const { log, verboseLog } = require('../utils');
 const { extractText } = require('../images');
 const { discoverSidecar } = require('./discovery');
-const { makeH2JsonCall, makeH2StreamingCall } = require('./rpc');
+const { makeH2JsonCall, makeH2ProtoCall, makeH2ProtoStreamingCall } = require('./rpc');
+const { encodeProto, decodeProto } = require('./proto');
 
 // ─────────────────────────────────────────────
 // Proto-compatible Metadata builder
@@ -156,12 +157,14 @@ async function callSidecarChat(
 
           const startPayload = {
             metadata: buildMetadata(ctx),
-            source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT',
+            source: 1, // CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT
           };
           if (workspaceUri) {
             startPayload.workspaceUris = [workspaceUri];
           }
-          const startResult = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'StartCascade', startPayload);
+          const startBytes = encodeProto('exa.language_server_pb.StartCascadeRequest', startPayload);
+          const respBytes = await makeH2ProtoCall(lsPort, mainCsrf, info.certPath, 'StartCascade', startBytes);
+          const startResult = decodeProto('exa.language_server_pb.StartCascadeResponse', respBytes);
           const newId = startResult && startResult.cascadeId;
 
           if (originalFolders && originalFolders.length > 0) {
@@ -199,8 +202,8 @@ async function callSidecarChat(
       cascadeId,
       items: [{ text: userMessage }],
       metadata: buildMetadata(ctx),
-      clientType: 'CHAT_CLIENT_REQUEST_STREAM_CLIENT_TYPE_IDE',
-      messageOrigin: 'AGENT_MESSAGE_ORIGIN_IDE',
+      clientType: 1, // CHAT_CLIENT_REQUEST_STREAM_CLIENT_TYPE_IDE
+      messageOrigin: 1, // AGENT_MESSAGE_ORIGIN_IDE
       cascadeConfig: {
         plannerConfig: {
           conversational: conversationalConfig,
@@ -214,7 +217,8 @@ async function callSidecarChat(
       vlog(`  🖼️ ${images.length} image(s) referenced as temp file paths in message text`);
     }
     try {
-      await makeH2StreamingCall(lsPort, mainCsrf, info.certPath, 'SendUserCascadeMessage', sendPayload);
+      const sendBytes = encodeProto('exa.language_server_pb.SendUserCascadeMessageRequest', sendPayload);
+      await makeH2ProtoStreamingCall(lsPort, mainCsrf, info.certPath, 'SendUserCascadeMessage', sendBytes);
       log(ctx, `  ✅ SendUserCascadeMessage dispatched (attempt ${attempt + 1})`);
       vlog(`  📦 Payload: ${JSON.stringify(sendPayload).substring(0, 1000)}`);
     } catch (e) {

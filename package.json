@@ -94,5 +94,8 @@
         "title": "AG Local Bridge: Probe Sidecar Connection"
       }
     ]
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.11.0"
   }
 }

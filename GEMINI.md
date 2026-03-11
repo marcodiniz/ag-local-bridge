@@ -73,6 +73,7 @@ src/
     discovery.js        # Cross-platform sidecar process discovery
     rpc.js              # HTTP/2 JSON RPC calls to sidecar
     cascade.js          # Cascade (chat) RPC helpers
+    proto.js            # Binary protobuf encoding (minimal descriptors)
     raw.js              # Raw LLM inference (GetModelResponse bypass)
 test/
   setup.js              # Global test setup (VS Code mock loader)
