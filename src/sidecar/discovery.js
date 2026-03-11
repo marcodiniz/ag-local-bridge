@@ -74,8 +74,10 @@ function windowsStrategy(binaryNames) {
   return {
     async findProcess() {
       for (const binaryName of binaryNames) {
-        // Use Get-CimInstance Win32_Process (preferred over deprecated wmic)
-        const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | Format-List`;
+        // ConvertTo-Json avoids Format-List line-wrapping issues inside Electron
+        // (Format-List wraps based on console buffer width, which may be very
+        //  narrow or undefined when running inside the Antigravity extension host)
+        const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
         const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
           encoding: 'utf8',
           timeout: 10000,
@@ -83,11 +85,37 @@ function windowsStrategy(binaryNames) {
 
         if (!stdout || !stdout.trim()) continue;
 
-        const pidMatch = stdout.match(/ProcessId\s*:\s*(\d+)/);
-        const cmdMatch = stdout.match(/CommandLine\s*:\s*(.+)/);
+        try {
+          let parsed = JSON.parse(stdout.trim());
+          // ConvertTo-Json returns an object when there's 1 result, array when >1
+          if (!Array.isArray(parsed)) parsed = [parsed];
 
-        if (pidMatch && cmdMatch) {
-          return { pid: pidMatch[1], commandLine: cmdMatch[1].trim(), user: '' };
+          const candidates = parsed
+            .filter((p) => p.ProcessId && p.CommandLine)
+            .map((p) => ({
+              pid: String(p.ProcessId),
+              commandLine: p.CommandLine,
+              user: '',
+            }));
+
+          const best = chooseBestProcess(candidates);
+          if (best) return best;
+        } catch {
+          // Fallback: try Format-List parsing if JSON fails
+          const fallbackCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | Format-List`;
+          const { stdout: flStdout } = await execFileAsync(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', fallbackCmd],
+            { encoding: 'utf8', timeout: 10000 },
+          );
+
+          if (flStdout && flStdout.trim()) {
+            const pidMatch = flStdout.match(/ProcessId\s*:\s*(\d+)/);
+            const cmdMatch = flStdout.match(/CommandLine\s*:\s*(.+)/);
+            if (pidMatch && cmdMatch) {
+              return { pid: pidMatch[1], commandLine: cmdMatch[1].trim(), user: '' };
+            }
+          }
         }
       }
 
@@ -259,7 +287,8 @@ async function discoverSidecar(ctx) {
     const lspPortMatch = commandLine.match(/--lsp_port[= ](\d+)/);
 
     if (!extPortMatch) {
-      log(ctx, '⚠️ Could not find sidecar extension_server_port');
+      log(ctx, `⚠️ Could not find sidecar extension_server_port (PID=${pid}, cmdLine=${commandLine.length} chars)`);
+      log(ctx, `⚠️ CommandLine: ${commandLine.substring(0, 300)}`);
       return null;
     }
 

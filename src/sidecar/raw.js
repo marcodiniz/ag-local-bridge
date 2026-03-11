@@ -88,6 +88,7 @@ function parseToolCalls(responseText) {
     try {
       const parsed = JSON.parse(match[1]);
       toolCalls.push({
+        index: toolCalls.length,
         id: `call_${Date.now()}_${toolCalls.length}`,
         type: 'function',
         function: {
