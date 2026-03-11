@@ -9,102 +9,13 @@ const fs = require('fs');
 // ConnectRPC communication with the sidecar
 // ─────────────────────────────────────────────
 
-/** Make a H2+JSON ConnectRPC call to the LanguageServerService (with automatic retry on transient connect failures) */
-async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await _makeH2JsonCallOnce(port, csrf, certPath, method, body);
-    } catch (e) {
-      // Retry on transient H2 connect errors (empty message = TLS/socket race)
-      if (attempt < retries && (e.message.includes('H2 connect:') || e.message.includes('H2 timeout'))) {
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-}
-
-function _makeH2JsonCallOnce(port, csrf, certPath, method, body) {
-  const payload = JSON.stringify(body);
-  return new Promise((resolve, reject) => {
-    let ca;
-    try {
-      ca = certPath ? fs.readFileSync(certPath) : undefined;
-    } catch {
-      /* ignore */
-    }
-    const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
-    let totalBody = '';
-    let status;
-    let settled = false;
-    const settle = (fn, val) => {
-      if (!settled) {
-        settled = true;
-        fn(val);
-      }
-    };
-    client.on('error', (err) => {
-      settle(reject, new Error('H2 connect: ' + err.message));
-    });
-    client.on('connect', () => {
-      const req = client.request({
-        ':method': 'POST',
-        ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
-        'content-type': 'application/json',
-        'connect-protocol-version': '1',
-        'x-codeium-csrf-token': csrf,
-      });
-      req.on('response', (h) => {
-        status = h[':status'];
-      });
-      req.on('data', (d) => {
-        totalBody += d.toString('utf8');
-      });
-      req.on('end', () => {
-        client.close();
-        if (status === 200) {
-          try {
-            settle(resolve, JSON.parse(totalBody));
-          } catch {
-            settle(resolve, totalBody);
-          }
-        } else {
-          settle(reject, new Error(`HTTP ${status}: ${totalBody.substring(0, 150)}`));
-        }
-      });
-      req.on('error', (e) => {
-        client.close();
-        settle(reject, e);
-      });
-      req.write(payload);
-      req.end();
-    });
-    setTimeout(() => {
-      try {
-        client.close();
-      } catch {}
-      settle(reject, new Error('H2 timeout'));
-    }, 10000);
-  });
-}
-
-/** Make a H2+Proto ConnectRPC call to the LanguageServerService (binary protobuf) */
-async function makeH2ProtoCall(port, csrf, certPath, method, protoBytes, retries = 2) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes);
-    } catch (e) {
-      if (attempt < retries && (e.message.includes('H2 connect:') || e.message.includes('H2 timeout'))) {
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-}
-
-function _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes) {
+/**
+ * Low-level H2 ConnectRPC unary call.
+ * Both JSON and Proto callers delegate here — the only difference is
+ * `contentType`, the serialised `payload` buffer, and how the caller
+ * interprets the returned `Buffer`.
+ */
+function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload) {
   return new Promise((resolve, reject) => {
     let ca;
     try {
@@ -129,7 +40,7 @@ function _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes) {
       const req = client.request({
         ':method': 'POST',
         ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
-        'content-type': 'application/proto',
+        'content-type': contentType,
         'connect-protocol-version': '1',
         'x-codeium-csrf-token': csrf,
       });
@@ -143,7 +54,7 @@ function _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes) {
         client.close();
         const body = Buffer.concat(chunks);
         if (status === 200) {
-          settle(resolve, new Uint8Array(body));
+          settle(resolve, body);
         } else {
           settle(reject, new Error(`HTTP ${status}: ${body.toString('utf8').substring(0, 150)}`));
         }
@@ -152,7 +63,7 @@ function _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes) {
         client.close();
         settle(reject, e);
       });
-      req.write(Buffer.from(protoBytes));
+      req.write(payload);
       req.end();
     });
     setTimeout(() => {
@@ -164,9 +75,13 @@ function _makeH2ProtoCallOnce(port, csrf, certPath, method, protoBytes) {
   });
 }
 
-/** Make a streaming H2+JSON ConnectRPC call to the LanguageServerService (for SendUserCascadeMessage etc.) */
-function makeH2StreamingCall(port, csrf, certPath, method, body) {
-  const payload = JSON.stringify(body);
+/**
+ * Low-level H2 ConnectRPC streaming call (server-streaming).
+ * The server streams responses after receiving our single request frame.
+ * Timeout resolution (not rejection) is intentional — the sidecar starts
+ * processing asynchronously and we poll for results separately.
+ */
+function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, payload) {
   return new Promise((resolve, reject) => {
     let ca;
     try {
@@ -194,7 +109,7 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
       const req = client.request({
         ':method': 'POST',
         ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
-        'content-type': 'application/json',
+        'content-type': contentType,
         'connect-protocol-version': '1',
         'x-codeium-csrf-token': csrf,
       });
@@ -229,69 +144,68 @@ function makeH2StreamingCall(port, csrf, certPath, method, body) {
   });
 }
 
-/** Make a streaming H2+Proto ConnectRPC call (binary protobuf) */
-function makeH2ProtoStreamingCall(port, csrf, certPath, method, protoBytes) {
-  return new Promise((resolve, reject) => {
-    let ca;
+/** Retry wrapper for transient H2 connect/timeout errors */
+async function _withRetry(fn, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      ca = certPath ? fs.readFileSync(certPath) : undefined;
-    } catch {
-      /* ignore */
+      return await fn();
+    } catch (e) {
+      if (attempt < retries && (e.message.includes('H2 connect:') || e.message.includes('H2 timeout'))) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      throw e;
     }
-    const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
-    let status;
-    const chunks = [];
-
-    const timer = setTimeout(() => {
-      try {
-        client.close();
-      } catch {}
-      resolve();
-    }, 30000);
-
-    client.on('error', (err) => {
-      clearTimeout(timer);
-      reject(new Error('H2 connect: ' + err.message));
-    });
-
-    client.on('connect', () => {
-      const req = client.request({
-        ':method': 'POST',
-        ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
-        'content-type': 'application/proto',
-        'connect-protocol-version': '1',
-        'x-codeium-csrf-token': csrf,
-      });
-      req.on('response', (h) => {
-        status = h[':status'];
-      });
-      req.on('data', (d) => {
-        chunks.push(d);
-      });
-      req.on('end', () => {
-        clearTimeout(timer);
-        try {
-          client.close();
-        } catch {}
-        if (status === 200) resolve();
-        else {
-          const body = Buffer.concat(chunks).toString('utf8');
-          reject(new Error(`HTTP ${status}: ${body.substring(0, 150)}`));
-        }
-      });
-      req.on('error', (e) => {
-        clearTimeout(timer);
-        try {
-          client.close();
-        } catch {}
-        if (status === 200 || chunks.length > 0) resolve();
-        else reject(e);
-      });
-      req.write(Buffer.from(protoBytes));
-      req.end();
-    });
-  });
+  }
 }
+
+// ─────────────────────────────────────────────
+// Public: JSON calls
+// ─────────────────────────────────────────────
+
+/** Make a unary H2+JSON ConnectRPC call (with automatic retry) */
+async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2) {
+  const payload = Buffer.from(JSON.stringify(body));
+  const raw = await _withRetry(
+    () => _makeH2UnaryCallOnce(port, csrf, certPath, method, 'application/json', payload),
+    retries,
+  );
+  try {
+    return JSON.parse(raw.toString('utf8'));
+  } catch {
+    return raw.toString('utf8');
+  }
+}
+
+/** Make a streaming H2+JSON ConnectRPC call */
+function makeH2StreamingCall(port, csrf, certPath, method, body) {
+  const payload = Buffer.from(JSON.stringify(body));
+  return _makeH2StreamingCallOnce(port, csrf, certPath, method, 'application/json', payload);
+}
+
+// ─────────────────────────────────────────────
+// Public: Proto calls
+// ─────────────────────────────────────────────
+
+/** Make a unary H2+Proto ConnectRPC call (with automatic retry) */
+async function makeH2ProtoCall(port, csrf, certPath, method, protoBytes, retries = 2) {
+  const payload = Buffer.from(protoBytes);
+  const raw = await _withRetry(
+    () => _makeH2UnaryCallOnce(port, csrf, certPath, method, 'application/proto', payload),
+    retries,
+  );
+  return new Uint8Array(raw);
+}
+
+/** Make a streaming H2+Proto ConnectRPC call */
+function makeH2ProtoStreamingCall(port, csrf, certPath, method, protoBytes) {
+  const payload = Buffer.from(protoBytes);
+  return _makeH2StreamingCallOnce(port, csrf, certPath, method, 'application/proto', payload);
+}
+
+// ─────────────────────────────────────────────
+// Legacy: HTTP/1.1 ConnectRPC (with HTTPS→HTTP fallback)
+// ─────────────────────────────────────────────
 
 function makeConnectRpcCallOnPort(port, csrf, certPath, servicePath, payload) {
   return new Promise((resolve, reject) => {
