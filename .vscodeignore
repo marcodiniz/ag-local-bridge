@@ -2,8 +2,9 @@
 .git/**
 .gitignore
 .vscode-test/**
-node_modules/**
 .github/**
+.agents/**
+.gemini/
 
 # Build artifacts
 *.vsix
@@ -17,6 +18,7 @@ CHANGELOG.md
 
 # Dev config & tests (not needed at runtime)
 test/**
+scripts/**
 eslint.config.js
 .prettierrc
 .prettierignore
