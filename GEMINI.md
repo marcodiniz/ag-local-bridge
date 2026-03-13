@@ -156,10 +156,22 @@ All sidecar calls use HTTP/2 + Connect protocol over `https://localhost:<port>`.
 
 ### CI Pipeline (`.github/workflows/publish.yml`)
 
-Triggers on every push to `master`. Two jobs:
+Triggers on every push to `master` or `beta`. Two jobs:
 
 1. **check**: `npm ci` → `lint` → `format:check` → `test`
 2. **publish**: auto-versions as `1.1.<run_number>` → packages VSIX → publishes to Open VSX
 
+Branch behaviour:
+
+| Branch   | `vsce package` flag | `ovsx publish` flag | Result          |
+| -------- | ------------------- | ------------------- | --------------- |
+| `beta`   | `--pre-release`     | `--pre-release`     | **Pre-release** |
+| `master` | _(none)_            | _(none)_            | **Stable**      |
+
 Version scheme: `1.1.{github.run_number}` — update the `1.1` prefix in the workflow
 whenever the base version in `package.json` changes.
+
+### Branching Strategy
+
+- **`beta`** is the **default branch**. All PRs should target `beta`.
+- **`master`** is protected (requires PR). Merge `beta → master` to cut a stable release.

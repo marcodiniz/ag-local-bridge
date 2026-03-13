@@ -234,6 +234,22 @@ The extension uses a 2-tier fallback strategy:
 - [Antigravity](https://codeium.com/antigravity) installed and running
 - Active Antigravity subscription (Free/Pro/Teams/Enterprise)
 
+## Contributing
+
+We use a **beta → master** release flow:
+
+| Branch   | Role                  | Publishes as    |
+| -------- | --------------------- | --------------- |
+| `beta`   | Default / development | **Pre-release** |
+| `master` | Stable releases only  | **Stable**      |
+
+1. **Fork & branch** off `beta` (the default branch).
+2. **Open your PR against `beta`** — GitHub will target it automatically.
+3. Once merged, a **pre-release** is published to [Open VSX](https://open-vsx.org/extension/marcodiniz/ag-local-bridge) for beta testers.
+4. When a beta build is ready for general availability, the maintainer merges `beta → master` to cut a **stable release**.
+
+> **Note:** `master` is protected — direct pushes are not allowed. All changes flow through `beta` first.
+
 ## License
 
 MIT
