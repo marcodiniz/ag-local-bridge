@@ -2,7 +2,7 @@ name: Publish to Open VSX
 
 on:
   push:
-    branches: [master]
+    branches: [master, beta]
 
 jobs:
   check:
@@ -50,12 +50,24 @@ jobs:
           echo "📦  Version: $VERSION"
 
       - name: Package extension
-        run: vsce package
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/beta" ]; then
+            vsce package --pre-release
+          else
+            vsce package
+          fi
 
       - name: Publish to Open VSX
         run: |
           echo "Publishing version $VERSION..."
-          ovsx publish *.vsix -p ${{ secrets.OPEN_VSX_TOKEN }} 2>&1 || {
-            echo "::error::ovsx publish failed. Check that OPEN_VSX_TOKEN secret is set and valid."
-            exit 1
-          }
+          if [ "${{ github.ref }}" = "refs/heads/beta" ]; then
+            ovsx publish *.vsix -p ${{ secrets.OPEN_VSX_TOKEN }} --pre-release 2>&1 || {
+              echo "::error::ovsx publish pre-release failed. Check that OPEN_VSX_TOKEN secret is set and valid."
+              exit 1
+            }
+          else
+            ovsx publish *.vsix -p ${{ secrets.OPEN_VSX_TOKEN }} 2>&1 || {
+              echo "::error::ovsx publish failed. Check that OPEN_VSX_TOKEN secret is set and valid."
+              exit 1
+            }
+          fi
