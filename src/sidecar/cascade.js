@@ -229,7 +229,7 @@ async function callSidecarChat(
 
     // Poll trajectory until PLANNER_RESPONSE + IDLE
     const pollStart = Date.now();
-    const maxWait = 60000;
+    const maxWait = 300000; // Wait up to 5 minutes, thinking models can be very slow
     let shouldRetry = false;
     while (Date.now() - pollStart < maxWait) {
       await new Promise((r) => setTimeout(r, 1500));
@@ -252,7 +252,7 @@ async function callSidecarChat(
               return text.trim();
             }
           }
-          // Check for capacity error → retry with fresh cascade
+          // Check for capacity error → fail fast, don't retry (each retry burns more quota)
           if (
             steps.some(
               (s) =>
@@ -262,9 +262,9 @@ async function callSidecarChat(
                   .includes('capacity'),
             )
           ) {
-            log(ctx, `  ⚠️ Capacity error (attempt ${attempt + 1}), will retry...`);
+            log(ctx, `  🛑 Capacity error (attempt ${attempt + 1}), failing fast (no retry to preserve quota)`);
             ctx.activeCascades.delete(convKey);
-            shouldRetry = true;
+            shouldRetry = false; // Don't retry — model is capacity-exhausted, retrying just wastes quota
           } else {
             log(ctx, `  ⚠️ IDLE with no PLANNER_RESPONSE after ${elapsed}s`);
             ctx.activeCascades.delete(convKey);

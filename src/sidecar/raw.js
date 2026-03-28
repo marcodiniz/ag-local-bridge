@@ -146,8 +146,9 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
   const prompt = formatMessagesAsPrompt(messages, tools);
   log(ctx, `🧠 Raw inference: ${prompt.length} chars, model=${modelEnum}, tools=${tools ? tools.length : 0}`);
 
-  // Call GetModelResponse with extended timeout (LLM inference can take 30-60s for large prompts)
-  const INFERENCE_TIMEOUT_MS = 120000; // 2 minutes
+  // Call GetModelResponse with an extended timeout.
+  // Large prompts or slow thinking models can take several minutes.
+  const INFERENCE_TIMEOUT_MS = 300000; // 5 minutes
   const result = await makeH2JsonCall(
     lsPort,
     mainCsrf,

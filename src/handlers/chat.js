@@ -215,6 +215,21 @@ async function _handleChatCompletionsInner(
       }
     } catch (err) {
       log(ctx, `⚠️ Raw inference failed: ${err.message}`);
+      // If the error is a capacity/rate-limit error, return 429 immediately.
+      // Do NOT fall through to Cascade — it uses the same model and would just burn more quota.
+      const isCapacity =
+        err.message.includes('RESOURCE_EXHAUSTED') ||
+        err.message.includes('429') ||
+        err.message.toLowerCase().includes('capacity');
+      if (isCapacity) {
+        log(ctx, `🛑 Model capacity exhausted — returning 429 to caller (not retrying via cascade)`);
+        return sendJson(res, 429, {
+          error: {
+            message: 'Model capacity exhausted. Please wait a moment before retrying.',
+            type: 'rate_limit',
+          },
+        });
+      }
     }
   } else {
     log(ctx, `⚠️ No raw model enum mapping for value ${resolved.value}, skipping raw mode`);
