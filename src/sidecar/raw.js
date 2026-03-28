@@ -148,7 +148,7 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
 
   // Call GetModelResponse with an extended timeout.
   // Large prompts or slow thinking models can take several minutes.
-  const INFERENCE_TIMEOUT_MS = 300000; // 5 minutes
+  const INFERENCE_TIMEOUT_MS = 900000; // 15 minutes
   const result = await makeH2JsonCall(
     lsPort,
     mainCsrf,
