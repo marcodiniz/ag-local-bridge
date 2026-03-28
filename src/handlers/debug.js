@@ -20,6 +20,14 @@ async function handleDebug(ctx, req, res) {
     port: ctx.interceptedPort,
   };
 
+  // Bridge Status
+  result.bridge = {
+    chatRequestsInFlight: ctx.chatRequestsInFlight,
+    lastUserMessageHash: ctx.lastUserMessageHash,
+    timeSinceLastResponseSec: Math.round((Date.now() - ctx.lastResponseTimestamp) / 1000),
+    uptimeSec: Math.round((Date.now() - (ctx.lastResponseTimestamp || Date.now())) / 1000), // approximate
+  };
+
   // Sidecar
   const info = await discoverSidecar(ctx);
   result.sidecar = info || { error: 'Not found' };

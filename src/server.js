@@ -20,7 +20,14 @@ async function startServer(ctx) {
   ctx.server = http.createServer((req, res) => {
     handleRequest(ctx, req, res).catch((err) => {
       log(ctx, `Request error: ${err.message}`, true);
-      if (!res.headersSent) sendJson(res, 500, { error: { message: err.message, type: 'internal_error' } });
+      if (!res.headersSent) {
+        sendJson(res, 500, { error: { message: err.message, type: 'internal_error' } });
+      } else if (!res.writableEnded) {
+        // If it's a stream, send an error chunk and end it
+        res.write(`data: {"error": "${err.message.replace(/"/g, '\\"')}"}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
     });
   });
 

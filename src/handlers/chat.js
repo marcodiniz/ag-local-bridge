@@ -100,9 +100,12 @@ async function handleChatCompletions(ctx, req, res) {
     });
   }
 
-  // ── Duplicate detection: same LAST user message within dedup window ──
-  const lastUserMsg = userTexts.length > 0 ? userTexts[userTexts.length - 1].trim() : '';
-  const msgHash = lastUserMsg.substring(0, 500);
+  // ── Duplicate detection: same LAST message within dedup window ──
+  // We hash the last message rather than just the last user message, because during tool execution,
+  // the client sends tool results (with role="tool") causing the last *user* message to seem identical.
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : { role: 'none', content: '' };
+  const lastMsgText = `${lastMsg.role}:${extractText(lastMsg.content)}`;
+  const msgHash = lastMsgText.substring(0, 500);
   if (msgHash === ctx.lastUserMessageHash && now - ctx.lastUserMessageTimestamp < ctx.DEDUP_WINDOW_MS) {
     log(ctx, `🛑 Duplicate message rejected (same message within ${ctx.DEDUP_WINDOW_MS / 1000}s)`);
     return sendJson(res, 429, {
@@ -140,6 +143,17 @@ async function handleChatCompletions(ctx, req, res) {
 
   ctx.chatRequestsInFlight++;
   log(ctx, `📡 Requests in flight: ${ctx.chatRequestsInFlight}`);
+
+  // Start keep-alive heartbeats immediately for streams to prevent client read timeouts
+  // during extremely long local or upstream inference (can take >60s for huge prompts)
+  let keepAliveTimer = null;
+  if (isStream) {
+    setupStreamResponse(res);
+    keepAliveTimer = setInterval(() => {
+      res.write(': keep-alive\n\n');
+    }, 5000);
+  }
+
   try {
     await _handleChatCompletionsInner(
       ctx,
@@ -153,6 +167,7 @@ async function handleChatCompletions(ctx, req, res) {
       payload,
     );
   } finally {
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
     ctx.chatRequestsInFlight--;
     ctx.lastResponseTimestamp = Date.now();
   }
@@ -192,7 +207,6 @@ async function _handleChatCompletionsInner(
         const text = raw.content || '';
         log(ctx, `✅ Raw inference succeeded (${text.length} chars)`);
         if (isStream) {
-          setupStreamResponse(res);
           if (raw.toolCalls) {
             // Stream tool calls in OpenAI format
             const chunk = buildStreamChunk(completionId, resolved.key, text || null, null);
@@ -201,13 +215,15 @@ async function _handleChatCompletionsInner(
           } else {
             res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, text))}\n\n`);
           }
-          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
+          const finishReason = raw.toolCalls ? 'tool_calls' : 'stop';
+          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, finishReason))}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
         } else {
           const completion = buildCompletion(completionId, resolved.key, text);
           if (raw.toolCalls) {
             completion.choices[0].message.tool_calls = raw.toolCalls;
+            completion.choices[0].finish_reason = 'tool_calls';
           }
           sendJson(res, 200, completion);
         }
@@ -217,18 +233,31 @@ async function _handleChatCompletionsInner(
       log(ctx, `⚠️ Raw inference failed: ${err.message}`);
       // If the error is a capacity/rate-limit error, return 429 immediately.
       // Do NOT fall through to Cascade — it uses the same model and would just burn more quota.
-      const isCapacity =
+      const isCapacityOrUpstream =
         err.message.includes('RESOURCE_EXHAUSTED') ||
         err.message.includes('429') ||
-        err.message.toLowerCase().includes('capacity');
-      if (isCapacity) {
-        log(ctx, `🛑 Model capacity exhausted — returning 429 to caller (not retrying via cascade)`);
-        return sendJson(res, 429, {
+        err.message.toLowerCase().includes('capacity') ||
+        err.message.includes('Upstream API failed');
+
+      if (isCapacityOrUpstream) {
+        log(ctx, `🛑 Upstream API error/capacity — returning 502/429 to caller`);
+        const errPayload = {
           error: {
-            message: 'Model capacity exhausted. Please wait a moment before retrying.',
-            type: 'rate_limit',
+            message: `Upstream model provider error: ${err.message}`,
+            type: 'server_error',
           },
-        });
+        };
+        if (isStream) {
+          res.write(
+            `data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, errPayload.error.message))}\n\n`,
+          );
+          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+        } else {
+          return sendJson(res, 502, errPayload);
+        }
+        return;
       }
     }
   } else {
@@ -240,7 +269,6 @@ async function _handleChatCompletionsInner(
     const result = await callSidecarChat(ctx, messages, resolved.value, workspaceDir, workspaceUri, images);
     if (result) {
       if (isStream) {
-        setupStreamResponse(res);
         res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, result))}\n\n`);
         res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
         res.write('data: [DONE]\n\n');
@@ -265,7 +293,6 @@ async function _handleChatCompletionsInner(
     await dispatchViaAntigravityCommand(userMessage);
     const text = '[Message dispatched to Antigravity agent panel. Check the Antigravity chat panel for the response.]';
     if (isStream) {
-      setupStreamResponse(res);
       res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'antigravity', text))}\n\n`);
       res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'antigravity', null, 'stop'))}\n\n`);
       res.write('data: [DONE]\n\n');
@@ -278,12 +305,20 @@ async function _handleChatCompletionsInner(
     log(ctx, `⚠️ Command dispatch failed: ${err.message}`);
   }
 
-  sendJson(res, 503, {
+  const failPayload = {
     error: {
       message: 'All tiers failed. Run "Antigravity Bridge: Probe Sidecar" from Command Palette.',
       type: 'service_unavailable',
     },
-  });
+  };
+  if (isStream && !res.writableEnded) {
+    res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'error', failPayload.error.message))}\n\n`);
+    res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'error', null, 'stop'))}\n\n`);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } else if (!res.headersSent) {
+    sendJson(res, 503, failPayload);
+  }
 }
 
 module.exports = { handleChatCompletions };

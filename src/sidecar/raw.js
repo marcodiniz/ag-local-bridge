@@ -165,6 +165,14 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
   const responseText = (result && result.response) || '';
   log(ctx, `🧠 Raw response: ${responseText.length} chars`);
 
+  // Check if upstream silently returned a Google API proxy error as plaintext
+  if (
+    responseText.includes("Method doesn't allow unregistered callers") ||
+    responseText.includes('RESOURCE_EXHAUSTED')
+  ) {
+    throw new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
+  }
+
   // Parse tool calls from the response if tools were provided
   if (tools && tools.length > 0) {
     return parseToolCalls(responseText);
