@@ -14,7 +14,6 @@ const {
 const { extractText, extractAllImages } = require('../images');
 const { resolveModel } = require('../models');
 const { resolveWorkspace } = require('../workspace');
-const { callSidecarChat } = require('../sidecar/cascade');
 const { callRawInference } = require('../sidecar/raw');
 
 // Map numeric model enum values → GetModelResponse string enum
@@ -30,27 +29,6 @@ const VALUE_TO_MODEL_ENUM = {
 // ─────────────────────────────────────────────
 // POST /v1/chat/completions
 // ─────────────────────────────────────────────
-
-async function dispatchViaAntigravityCommand(userMessage) {
-  const allCommands = await vscode.commands.getCommands(true);
-  const command = ['antigravity.executeCascadeAction'].find((candidate) => allCommands.includes(candidate));
-
-  if (!command) {
-    const relatedCommands = allCommands.filter(
-      (name) =>
-        name.toLowerCase().includes('antigravity') ||
-        name.toLowerCase().includes('jetski') ||
-        name.toLowerCase().includes('cascade'),
-    );
-    const sample = relatedCommands.slice(0, 8).join(', ') || 'none';
-    throw new Error(`No supported Antigravity command-dispatch command found. Related commands: ${sample}`);
-  }
-
-  await vscode.commands.executeCommand(command, {
-    type: 'sendMessage',
-    message: userMessage,
-  });
-}
 
 async function handleChatCompletions(ctx, req, res) {
   const body = await readBody(req);
@@ -142,12 +120,21 @@ async function handleChatCompletions(ctx, req, res) {
   ctx.chatRequestsInFlight++;
   log(ctx, `📡 Requests in flight: ${ctx.chatRequestsInFlight}`);
 
-  // Start keep-alive heartbeats immediately for streams to prevent client read timeouts
-  // during extremely long local or upstream inference (can take >60s for huge prompts)
   let keepAliveTimer = null;
+  let headersSentForStream = false;
+
+  const initiateStream = () => {
+    if (isStream && !headersSentForStream) {
+      setupStreamResponse(res);
+      headersSentForStream = true;
+    }
+  };
+
   if (isStream) {
-    setupStreamResponse(res);
+    // Only start keep-alives and establish stream headers if inference takes longer than 5s.
+    // This allows fast upstream errors (<5s) to be sent as pure HTTP error codes with headers.
     keepAliveTimer = setInterval(() => {
+      initiateStream();
       res.write(': keep-alive\n\n');
     }, 5000);
   }
@@ -157,6 +144,8 @@ async function handleChatCompletions(ctx, req, res) {
       ctx,
       res,
       isStream,
+      initiateStream,
+      headersSentForStream,
       messages,
       completionId,
       resolved,
@@ -175,6 +164,8 @@ async function _handleChatCompletionsInner(
   ctx,
   res,
   isStream,
+  initiateStream,
+  headersSentForStream,
   messages,
   completionId,
   resolved,
@@ -194,143 +185,85 @@ async function _handleChatCompletionsInner(
   }
 
   const tools = payload.tools && payload.tools.length > 0 ? payload.tools : null;
-
-  // Tier 0: Raw inference (GetModelResponse — bypasses Cascade entirely)
   const modelEnum = VALUE_TO_MODEL_ENUM[resolved.value];
-  if (modelEnum) {
-    try {
-      log(ctx, `🧠 Trying raw inference (${modelEnum})...`);
-      const raw = await callRawInference(ctx, messages, modelEnum, tools);
-      if (raw && (raw.content || raw.toolCalls)) {
-        const text = raw.content || '';
-        log(ctx, `✅ Raw inference succeeded (${text.length} chars)`);
-        if (isStream) {
-          if (raw.toolCalls) {
-            // Stream tool calls in OpenAI format
-            const chunk = buildStreamChunk(completionId, resolved.key, text || null, null);
-            chunk.choices[0].delta.tool_calls = raw.toolCalls;
-            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-          } else {
-            res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, text))}\n\n`);
-          }
-          const finishReason = raw.toolCalls ? 'tool_calls' : 'stop';
-          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, finishReason))}\n\n`);
-          res.write('data: [DONE]\n\n');
-          res.end();
-        } else {
-          const completion = buildCompletion(completionId, resolved.key, text);
-          if (raw.toolCalls) {
-            completion.choices[0].message.tool_calls = raw.toolCalls;
-            completion.choices[0].finish_reason = 'tool_calls';
-          }
-          sendJson(res, 200, completion);
-        }
-        return;
-      }
-    } catch (err) {
-      log(ctx, `⚠️ Raw inference failed: ${err.message}`);
-      // If the error is a capacity/rate-limit error, return 429 immediately.
-      // Do NOT fall through to Cascade — it uses the same model and would just burn more quota.
-      const isCapacityOrUpstream =
-        err.message.includes('RESOURCE_EXHAUSTED') ||
-        err.message.includes('429') ||
-        err.message.includes('500') ||
-        err.message.includes('502') ||
-        err.message.includes('503') ||
-        err.message.includes('INTERNAL') ||
-        err.message.includes('UNAVAILABLE') ||
-        err.message.toLowerCase().includes('capacity') ||
-        err.message.includes('Upstream API failed');
 
-      if (isCapacityOrUpstream) {
-        const isRateLimit =
-          err.message.includes('capacity') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
-        const status = isRateLimit ? 429 : 502;
-        const errType = isRateLimit ? 'rate_limit' : 'server_error';
-
-        let retryAfterSecs = 10;
-        const match = err.message.match(/reset after (\d+)s/);
-        if (match) {
-          // Add 2s buffer to upstream reset time to prevent hammering the exact boundary
-          retryAfterSecs = parseInt(match[1], 10) + 2;
-        }
-
-        log(ctx, `🛑 Upstream API error/capacity — returning ${status} to caller (Retry-After: ${retryAfterSecs}s)`);
-
-        const errPayload = {
-          error: {
-            message: `Upstream model provider error: ${err.message}`,
-            type: errType,
-          },
-        };
-
-        if (isStream) {
-          // Send raw error object. OpenAI SDK parses {error: ...} as a native APIError rather than a text chunk.
-          res.write(`data: ${JSON.stringify({ error: errPayload.error })}\n\n`);
-          res.end();
-        } else {
-          res.setHeader('Retry-After', String(retryAfterSecs));
-          return sendJson(res, status, errPayload);
-        }
-        return;
-      }
+  if (!modelEnum) {
+    const errorMsg = `No raw model enum mapping for value ${resolved.value}. Raw inference unavailable.`;
+    log(ctx, `⚠️ ${errorMsg}`);
+    const errPayload = { error: { message: errorMsg, type: 'invalid_request' } };
+    if (isStream && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: errPayload.error })}\n\n`);
+      res.end();
+    } else if (!res.headersSent) {
+      sendJson(res, 400, errPayload);
     }
-  } else {
-    log(ctx, `⚠️ No raw model enum mapping for value ${resolved.value}, skipping raw mode`);
+    return;
   }
 
-  // Tier 1: Cascade (StartCascade → SendUserCascadeMessage → poll)
   try {
-    const result = await callSidecarChat(ctx, messages, resolved.value, workspaceDir, workspaceUri, images);
-    if (result) {
+    log(ctx, `🧠 Trying raw inference (${modelEnum})...`);
+    const raw = await callRawInference(ctx, messages, modelEnum, tools);
+    if (raw && (raw.content || raw.toolCalls)) {
+      const text = raw.content || '';
+      log(ctx, `✅ Raw inference succeeded (${text.length} chars)`);
       if (isStream) {
-        res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, result))}\n\n`);
-        res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
+        initiateStream();
+        if (raw.toolCalls) {
+          // Stream tool calls in OpenAI format
+          const chunk = buildStreamChunk(completionId, resolved.key, text || null, null);
+          chunk.choices[0].delta.tool_calls = raw.toolCalls;
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, text))}\n\n`);
+        }
+        const finishReason = raw.toolCalls ? 'tool_calls' : 'stop';
+        res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, finishReason))}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
       } else {
-        sendJson(res, 200, buildCompletion(completionId, resolved.key, result));
+        const completion = buildCompletion(completionId, resolved.key, text);
+        if (raw.toolCalls) {
+          completion.choices[0].message.tool_calls = raw.toolCalls;
+          completion.choices[0].finish_reason = 'tool_calls';
+        }
+        sendJson(res, 200, completion);
       }
       return;
     }
+    throw new Error('Raw inference returned empty content or no tool calls');
   } catch (err) {
-    log(ctx, `⚠️ Cascade call failed: ${err.message}`);
-  }
+    log(ctx, `⚠️ Raw inference failed: ${err.message}`);
 
-  // Tier 2: Command dispatch (fire-and-forget, returns acknowledgement)
-  // NOTE: This can create a feedback loop if the dispatched command routes back through the bridge.
-  try {
-    const userMessage = messages
-      .filter((m) => m.role === 'user')
-      .map((m) => extractText(m.content))
-      .join('\n');
-    log(ctx, `⚠️ Falling back to Tier 2 command dispatch (sidecar unavailable)`);
-    await dispatchViaAntigravityCommand(userMessage);
-    const text = '[Message dispatched to Antigravity agent panel. Check the Antigravity chat panel for the response.]';
-    if (isStream) {
-      res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'antigravity', text))}\n\n`);
-      res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'antigravity', null, 'stop'))}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
-    } else {
-      sendJson(res, 200, buildCompletion(completionId, 'antigravity', text));
+    // Enforce 429 for rate limit / capacity errors, otherwise 502 for general upstream/H2 crashes
+    const isRateLimit =
+      err.message.includes('capacity') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
+    const status = isRateLimit ? 429 : 502;
+    const errType = isRateLimit ? 'rate_limit' : 'server_error';
+
+    let retryAfterSecs = 10;
+    const match = err.message.match(/reset after (\d+)s/);
+    if (match) {
+      retryAfterSecs = parseInt(match[1], 10) + 2;
     }
-    return;
-  } catch (err) {
-    log(ctx, `⚠️ Command dispatch failed: ${err.message}`);
-  }
 
-  const failPayload = {
-    error: {
-      message: 'All tiers failed. Run "Antigravity Bridge: Probe Sidecar" from Command Palette.',
-      type: 'service_unavailable',
-    },
-  };
-  if (isStream && !res.writableEnded) {
-    res.write(`data: ${JSON.stringify({ error: failPayload.error })}\n\n`);
-    res.end();
-  } else if (!res.headersSent) {
-    sendJson(res, 503, failPayload);
+    log(ctx, `🛑 Upstream API error/capacity — returning ${status} to caller (Retry-After: ${retryAfterSecs}s)`);
+
+    const errPayload = {
+      error: {
+        message: `Upstream model provider error: ${err.message}`,
+        type: errType,
+      },
+    };
+
+    // If we haven't sent stream headers yet, we can send a true HTTP error.
+    // The client SDK will correctly read the HTTP status code and Retry-After header.
+    if (isStream && headersSentForStream) {
+      res.write(`data: ${JSON.stringify({ error: errPayload.error })}\n\n`);
+      res.end();
+    } else if (!res.headersSent) {
+      res.setHeader('Retry-After', String(retryAfterSecs));
+      sendJson(res, status, errPayload);
+    }
   }
 }
 
