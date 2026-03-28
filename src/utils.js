@@ -1,6 +1,9 @@
 'use strict';
 
 const vscode = require('vscode');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 // ─────────────────────────────────────────────
 // Logging
@@ -17,6 +20,17 @@ function log(ctx, msg, isError = false) {
   const ts = new Date().toISOString().slice(11, 23);
   if (ctx.outputChannel) ctx.outputChannel.appendLine(`[${ts}] ${msg}`);
   if (isError) console.error(`[ag-bridge] ${msg}`);
+
+  // Write to temporary global disk if explicit configuration is enabled (for debugging)
+  const config = vscode.workspace.getConfiguration('agLocalBridge');
+  if (config.get('logToFile', false)) {
+    try {
+      const logFilePath = path.join(os.tmpdir(), 'ag-local-bridge.log');
+      fs.appendFileSync(logFilePath, `[${ts}] ${msg}\n`, 'utf8');
+    } catch {
+      // ignore filesystem errors for log files
+    }
+  }
 }
 
 /** Log only when agLocalBridge.logRequests is enabled (verbose/debug output) */

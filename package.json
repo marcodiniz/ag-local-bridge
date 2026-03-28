@@ -65,6 +65,11 @@
           "type": "boolean",
           "default": false,
           "description": "Log full request/response details to the Output channel"
+        },
+        "agLocalBridge.logToFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Debug only: write all logs to your system's temporary directory (ag-local-bridge.log)"
         }
       }
     },
