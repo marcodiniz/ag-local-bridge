@@ -127,4 +127,26 @@ Here is my search.
     assert.equal(args.count, '15');
     assert.equal(result.content, 'Here is my search.');
   });
+
+  it('extracts native Claude 3 tool use XML format', () => {
+    const xml = `
+<function_calls>
+<tool_use>
+<name>get_weather</name>
+<input>
+<location>San Francisco, CA</location>
+<unit>fahrenheit</unit>
+</input>
+</tool_use>
+</function_calls>
+The weather should be nice.
+    `;
+    const result = parseToolCalls(xml);
+    assert.equal(result.toolCalls.length, 1);
+    assert.equal(result.toolCalls[0].function.name, 'get_weather');
+    const args = JSON.parse(result.toolCalls[0].function.arguments);
+    assert.equal(args.location, 'San Francisco, CA');
+    assert.equal(args.unit, 'fahrenheit');
+    assert.equal(result.content, 'The weather should be nice.');
+  });
 });

@@ -127,10 +127,36 @@ function parseToolCalls(responseText) {
     });
   }
 
+  // Parse 3: Native Claude 3 format (`<tool_use>` blocks)
+  // `<tool_use>\n<name>tool_name</name>\n<input>\n<param_name>value</param_name>\n</input>\n</tool_use>`
+  const toolUseRegex = /<tool_use>\s*<name>([\s\S]*?)<\/name>\s*<input>([\s\S]*?)<\/input>\s*<\/tool_use>/g;
+  while ((match = toolUseRegex.exec(responseText)) !== null) {
+    const fnName = match[1].trim();
+    const paramBlock = match[2];
+    const args = {};
+    // Extract everything that looks like `<param_key>param_value</param_key>`
+    const paramRegex = /<([a-zA-Z0-9_-]+)>([\s\S]*?)<\/\1>/g;
+    let pMatch;
+    while ((pMatch = paramRegex.exec(paramBlock)) !== null) {
+      args[pMatch[1]] = pMatch[2].trim();
+    }
+    toolCalls.push({
+      index: toolCalls.length,
+      id: `call_${Date.now()}_${toolCalls.length}`,
+      type: 'function',
+      function: {
+        name: fnName,
+        arguments: JSON.stringify(args),
+      },
+    });
+  }
+
   // Remove tool blocks from content to get the pure conversational text
   let content = responseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
   content = content.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
+  content = content.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, ''); // Common wrapper
   content = content.replace(/<invoke>[\s\S]*?<\/invoke>/g, '');
+  content = content.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, '');
   content = content.trim();
 
   return {
