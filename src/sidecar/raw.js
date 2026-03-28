@@ -28,7 +28,8 @@ function formatMessagesAsPrompt(messages, tools) {
     parts.push('# Available Tools\n');
     parts.push('When you need to use a tool, respond with EXACTLY this format (one per line):');
     parts.push('<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>\n');
-    parts.push('You may include multiple tool calls. After all tool calls, you may include additional text.\n');
+    parts.push('You may include multiple tool calls. After all tool calls, you may include additional text.');
+    parts.push('The human will execute the tools and return the results enclosed in <observation> tags.\n');
     for (const tool of tools) {
       if (tool.type === 'function' && tool.function) {
         const fn = tool.function;
@@ -64,9 +65,10 @@ function formatMessagesAsPrompt(messages, tools) {
         parts.push(`[Assistant]\n${content}\n`);
       }
     } else if (role === 'tool') {
-      // Tool results are shown with their tool_call_id for context
+      // Tool results are shown with their tool_call_id for context, enclosed in observation tags
+      // to satisfy models that are heavily fine-tuned on XML schema flows (Claude, Minimax)
       const toolName = msg.name || msg.tool_call_id || 'tool';
-      parts.push(`[Tool Result: ${toolName}]\n${content}\n`);
+      parts.push(`<observation>\n[Tool Result: ${toolName}]\n${content}\n</observation>\n`);
     }
   }
 
