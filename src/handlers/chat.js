@@ -234,11 +234,17 @@ async function _handleChatCompletionsInner(
       const isCapacityOrUpstream =
         err.message.includes('RESOURCE_EXHAUSTED') ||
         err.message.includes('429') ||
+        err.message.includes('500') ||
+        err.message.includes('502') ||
+        err.message.includes('503') ||
+        err.message.includes('INTERNAL') ||
+        err.message.includes('UNAVAILABLE') ||
         err.message.toLowerCase().includes('capacity') ||
         err.message.includes('Upstream API failed');
 
       if (isCapacityOrUpstream) {
-        const isRateLimit = err.message.includes('capacity') || err.message.includes('429');
+        const isRateLimit =
+          err.message.includes('capacity') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
         const status = isRateLimit ? 429 : 502;
         const errType = isRateLimit ? 'rate_limit' : 'server_error';
 
