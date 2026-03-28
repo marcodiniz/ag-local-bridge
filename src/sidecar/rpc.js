@@ -15,7 +15,7 @@ const fs = require('fs');
  * `contentType`, the serialised `payload` buffer, and how the caller
  * interprets the returned `Buffer`.
  */
-function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload) {
+function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let ca;
     try {
@@ -71,7 +71,7 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
         client.close();
       } catch {}
       settle(reject, new Error('H2 timeout'));
-    }, 10000);
+    }, timeoutMs);
   });
 }
 
@@ -145,12 +145,15 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
 }
 
 /** Retry wrapper for transient H2 connect/timeout errors */
-async function _withRetry(fn, retries = 2) {
+async function _withRetry(fn, retries = 2, retryOnTimeout = true) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn();
     } catch (e) {
-      if (attempt < retries && (e.message.includes('H2 connect:') || e.message.includes('H2 timeout'))) {
+      const isTimeout = e.message.includes('H2 timeout');
+      const isConnect = e.message.includes('H2 connect:');
+      // Don't retry on timeout if caller set a custom (long) timeout — the request legitimately failed
+      if (attempt < retries && (isConnect || (isTimeout && retryOnTimeout))) {
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         continue;
       }
@@ -164,11 +167,14 @@ async function _withRetry(fn, retries = 2) {
 // ─────────────────────────────────────────────
 
 /** Make a unary H2+JSON ConnectRPC call (with automatic retry) */
-async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2) {
+async function makeH2JsonCall(port, csrf, certPath, method, body, retries = 2, timeoutMs = 10000) {
   const payload = Buffer.from(JSON.stringify(body));
+  // If caller set a custom timeout (e.g. for inference), don't retry on timeout — the request ran its full duration
+  const retryOnTimeout = timeoutMs <= 10000;
   const raw = await _withRetry(
-    () => _makeH2UnaryCallOnce(port, csrf, certPath, method, 'application/json', payload),
+    () => _makeH2UnaryCallOnce(port, csrf, certPath, method, 'application/json', payload, timeoutMs),
     retries,
+    retryOnTimeout,
   );
   try {
     return JSON.parse(raw.toString('utf8'));
