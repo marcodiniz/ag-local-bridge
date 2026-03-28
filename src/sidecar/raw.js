@@ -80,10 +80,11 @@ function formatMessagesAsPrompt(messages, tools) {
  * @returns {{ content: string, toolCalls: Array|null }}
  */
 function parseToolCalls(responseText) {
-  const toolCallRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
   const toolCalls = [];
-  let match;
 
+  // Parse 1: Custom JSON `<tool_call>` format
+  const toolCallRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
+  let match;
   while ((match = toolCallRegex.exec(responseText)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
@@ -101,8 +102,34 @@ function parseToolCalls(responseText) {
     }
   }
 
-  // Remove tool_call blocks from the content to get the pure text
-  const content = responseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+  // Parse 2: Native XML format used by Claude/Minimax (`<invoke>` blocks)
+  // Supports `<minimax:tool_call><invoke>...</invoke></minimax:tool_call>` or direct `<invoke>`
+  const invokeRegex = /<invoke>\s*<tool_name>([\s\S]*?)<\/tool_name>([\s\S]*?)<\/invoke>/g;
+  while ((match = invokeRegex.exec(responseText)) !== null) {
+    const fnName = match[1].trim();
+    const paramBlock = match[2];
+    const args = {};
+    const paramRegex = /<parameter\s+name="([^"]+)">([\s\S]*?)<\/parameter>/g;
+    let pMatch;
+    while ((pMatch = paramRegex.exec(paramBlock)) !== null) {
+      args[pMatch[1]] = pMatch[2].trim();
+    }
+    toolCalls.push({
+      index: toolCalls.length,
+      id: `call_${Date.now()}_${toolCalls.length}`,
+      type: 'function',
+      function: {
+        name: fnName,
+        arguments: JSON.stringify(args),
+      },
+    });
+  }
+
+  // Remove tool blocks from content to get the pure conversational text
+  let content = responseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
+  content = content.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
+  content = content.replace(/<invoke>[\s\S]*?<\/invoke>/g, '');
+  content = content.trim();
 
   return {
     content: content || null,

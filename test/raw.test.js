@@ -107,4 +107,24 @@ describe('parseToolCalls', () => {
     assert.equal(result.toolCalls, null, 'Invalid JSON should result in no tool calls');
     assert.ok(result.content.includes('Hello'), 'Should preserve surrounding text');
   });
+
+  it('extracts native XML tool format (Claude/Minimax)', () => {
+    const xml = `
+<minimax:tool_call>
+<invoke>
+<tool_name>seq-prod_SeqSearch</tool_name>
+<parameter name="filter">@Timestamp > Now() - 1d</parameter>
+<parameter name="count">15</parameter>
+</invoke>
+</minimax:tool_call>
+Here is my search.
+    `;
+    const result = parseToolCalls(xml);
+    assert.equal(result.toolCalls.length, 1);
+    assert.equal(result.toolCalls[0].function.name, 'seq-prod_SeqSearch');
+    const args = JSON.parse(result.toolCalls[0].function.arguments);
+    assert.equal(args.filter, '@Timestamp > Now() - 1d');
+    assert.equal(args.count, '15');
+    assert.equal(result.content, 'Here is my search.');
+  });
 });
