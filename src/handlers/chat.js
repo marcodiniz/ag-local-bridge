@@ -215,8 +215,8 @@ async function _handleChatCompletionsInner(
       if (isStream) {
         initiateStream();
         if (raw.toolCalls) {
-          // Stream tool calls in OpenAI format
-          const chunk = buildStreamChunk(completionId, resolved.key, text || null, null);
+          // Stream tool calls in OpenAI format, always supply at least an empty string to force 'role: assistant'
+          const chunk = buildStreamChunk(completionId, resolved.key, text || '', null);
           chunk.choices[0].delta.tool_calls = raw.toolCalls;
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         } else {
