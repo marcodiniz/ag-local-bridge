@@ -40,7 +40,8 @@ async function handleChatCompletions(ctx, req, res) {
   }
 
   // Debug: log incoming request payload (verbose only)
-  verboseLog(ctx, `📥 Request body (${body.length} bytes): ${body.substring(0, 500)}`);
+  // The full body is strictly dumped to the file logs to prevent VSCode UI lag
+  verboseLog(ctx, `📥 Request body (${body.length} bytes): ${body.substring(0, 500)}...`, body);
 
   const isStream = payload.stream === true;
   const messages = payload.messages || [];
@@ -140,7 +141,11 @@ async function handleChatCompletions(ctx, req, res) {
 
     keepAliveTimer = setInterval(() => {
       initiateStream();
-      res.write(': keep-alive\n\n');
+      // Send a valid empty OpenAI delta instead of a raw SSE comment.
+      // Generic iterators completely ignore SSE comments, which causes standard fetch chunk timeouts to trip if inference takes >30s.
+      // Yielding an actual empty delta successfully resets the client's internal read timer.
+      const beat = buildStreamChunk(completionId, resolved.key, null);
+      res.write(`data: ${JSON.stringify(beat)}\n\n`);
     }, 4500);
   }
 

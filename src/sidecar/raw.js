@@ -1,6 +1,6 @@
 'use strict';
 
-const { log } = require('../utils');
+const { log, verboseLog } = require('../utils');
 const { extractText } = require('../images');
 const { discoverSidecar } = require('./discovery');
 const { makeH2JsonCall } = require('./rpc');
@@ -218,6 +218,8 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
   );
 
   const responseText = (result && result.response) || '';
+  // Dump full raw LLM token outputs explicitly to the file to trace XML tool generations
+  verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
   log(ctx, `🧠 Raw response: ${responseText.length} chars`);
 
   // Check if upstream silently returned a Google API proxy error as plaintext

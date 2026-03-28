@@ -21,9 +21,9 @@ function log(ctx, msg, isError = false) {
   if (ctx.outputChannel) ctx.outputChannel.appendLine(`[${ts}] ${msg}`);
   if (isError) console.error(`[ag-bridge] ${msg}`);
 
-  // Write to temporary global disk if explicit configuration is enabled (for debugging)
+  // Write to temporary global disk if verbose Request Logging is enabled in settings (for deep debugging)
   const config = vscode.workspace.getConfiguration('agLocalBridge');
-  if (config.get('logToFile', false)) {
+  if (config.get('logRequests', false)) {
     try {
       const logFilePath = path.join(os.tmpdir(), 'ag-local-bridge.log');
       fs.appendFileSync(logFilePath, `[${ts}] ${msg}\n`, 'utf8');
@@ -34,9 +34,41 @@ function log(ctx, msg, isError = false) {
 }
 
 /** Log only when agLocalBridge.logRequests is enabled (verbose/debug output) */
-function verboseLog(ctx, msg) {
+function verboseLog(ctx, msg, fullContent = null) {
   const config = vscode.workspace.getConfiguration('agLocalBridge');
-  if (config.get('logRequests', false)) log(ctx, msg);
+  if (config.get('logRequests', false)) {
+    log(ctx, msg);
+
+    // If a massive payload was provided, append it explicitly to a separate payload file, nicely formatted
+    if (fullContent !== null) {
+      try {
+        let formattedContent = fullContent;
+        if (typeof fullContent === 'string') {
+          try {
+            formattedContent = JSON.stringify(JSON.parse(fullContent), null, 2);
+          } catch {
+            // not valid JSON, leave as is
+          }
+        } else if (typeof fullContent === 'object') {
+          try {
+            formattedContent = JSON.stringify(fullContent, null, 2);
+          } catch {
+            // fallback
+          }
+        }
+
+        const payloadLogPath = path.join(os.tmpdir(), 'ag-local-bridge-payloads.log');
+        const ts = new Date().toISOString().slice(11, 23);
+        fs.appendFileSync(
+          payloadLogPath,
+          `\n--- [${ts}] FULL PAYLOAD DUMP ---\n${formattedContent}\n--- [END PAYLOAD DUMP] ---\n`,
+          'utf8',
+        );
+      } catch {
+        // ignore filesystem errors for log files
+      }
+    }
+  }
 }
 
 // ─────────────────────────────────────────────
