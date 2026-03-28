@@ -131,9 +131,7 @@ async function handleChatCompletions(ctx, req, res) {
     const busyMsg = '[Too many concurrent requests. Please wait and try again.]';
     if (isStream) {
       setupStreamResponse(res);
-      res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, busyMsg))}\n\n`);
-      res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
-      res.write('data: [DONE]\n\n');
+      res.write(`data: ${JSON.stringify({ error: { message: busyMsg, type: 'rate_limit' } })}\n\n`);
       res.end();
     } else {
       sendJson(res, 429, { error: { message: busyMsg, type: 'rate_limit' } });
@@ -240,22 +238,33 @@ async function _handleChatCompletionsInner(
         err.message.includes('Upstream API failed');
 
       if (isCapacityOrUpstream) {
-        log(ctx, `🛑 Upstream API error/capacity — returning 502/429 to caller`);
+        const isRateLimit = err.message.includes('capacity') || err.message.includes('429');
+        const status = isRateLimit ? 429 : 502;
+        const errType = isRateLimit ? 'rate_limit' : 'server_error';
+
+        let retryAfterSecs = 10;
+        const match = err.message.match(/reset after (\d+)s/);
+        if (match) {
+          // Add 2s buffer to upstream reset time to prevent hammering the exact boundary
+          retryAfterSecs = parseInt(match[1], 10) + 2;
+        }
+
+        log(ctx, `🛑 Upstream API error/capacity — returning ${status} to caller (Retry-After: ${retryAfterSecs}s)`);
+
         const errPayload = {
           error: {
             message: `Upstream model provider error: ${err.message}`,
-            type: 'server_error',
+            type: errType,
           },
         };
+
         if (isStream) {
-          res.write(
-            `data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, errPayload.error.message))}\n\n`,
-          );
-          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
-          res.write('data: [DONE]\n\n');
+          // Send raw error object. OpenAI SDK parses {error: ...} as a native APIError rather than a text chunk.
+          res.write(`data: ${JSON.stringify({ error: errPayload.error })}\n\n`);
           res.end();
         } else {
-          return sendJson(res, 502, errPayload);
+          res.setHeader('Retry-After', String(retryAfterSecs));
+          return sendJson(res, status, errPayload);
         }
         return;
       }
@@ -312,9 +321,7 @@ async function _handleChatCompletionsInner(
     },
   };
   if (isStream && !res.writableEnded) {
-    res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'error', failPayload.error.message))}\n\n`);
-    res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, 'error', null, 'stop'))}\n\n`);
-    res.write('data: [DONE]\n\n');
+    res.write(`data: ${JSON.stringify({ error: failPayload.error })}\n\n`);
     res.end();
   } else if (!res.headersSent) {
     sendJson(res, 503, failPayload);
