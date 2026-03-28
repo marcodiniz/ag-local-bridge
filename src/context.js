@@ -36,10 +36,10 @@ function createContext() {
 
     // Rate limiting / loop-breaking
     lastResponseTimestamp: 0,
-    MIN_REQUEST_INTERVAL_MS: 1000, // 1s cooldown between responses
+    MIN_REQUEST_INTERVAL_MS: 200, // 200ms cooldown between responses
     lastUserMessageHash: '',
     lastUserMessageTimestamp: 0,
-    DEDUP_WINDOW_MS: 5000, // 5s dedup window
+    DEDUP_WINDOW_MS: 1000, // 1s dedup window
 
     // CSRF token intercepted from Antigravity's own outgoing requests
     interceptedCsrf: null,
