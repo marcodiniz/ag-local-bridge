@@ -121,6 +121,7 @@ async function handleChatCompletions(ctx, req, res) {
   log(ctx, `📡 Requests in flight: ${ctx.chatRequestsInFlight}`);
 
   let keepAliveTimer = null;
+  let preStreamTimer = null;
   let headersSentForStream = false;
 
   const initiateStream = () => {
@@ -131,12 +132,16 @@ async function handleChatCompletions(ctx, req, res) {
   };
 
   if (isStream) {
-    // Only start keep-alives and establish stream headers if inference takes longer than 5s.
-    // This allows fast upstream errors (<5s) to be sent as pure HTTP error codes with headers.
+    // Force stream headers after 2 seconds to prevent client TTFB (Time To First Byte) timeouts.
+    // This still allows fast upstream errors (<2s) to cleanly return HTTP 429 codes with headers.
+    preStreamTimer = setTimeout(() => {
+      initiateStream();
+    }, 2000);
+
     keepAliveTimer = setInterval(() => {
       initiateStream();
       res.write(': keep-alive\n\n');
-    }, 5000);
+    }, 4500);
   }
 
   try {
@@ -155,6 +160,7 @@ async function handleChatCompletions(ctx, req, res) {
     );
   } finally {
     if (keepAliveTimer) clearInterval(keepAliveTimer);
+    if (preStreamTimer) clearTimeout(preStreamTimer);
     ctx.chatRequestsInFlight--;
     ctx.lastResponseTimestamp = Date.now();
   }
