@@ -5,6 +5,8 @@ const http = require('http');
 const { log, sendJson, updateStatusBar } = require('./utils');
 const { handleModels } = require('./handlers/models');
 const { handleChatCompletions } = require('./handlers/chat');
+const { handleAnthropicMessages, handleCountTokens } = require('./handlers/anthropic');
+const { handleGeminiGenerateContent, parseGeminiPath } = require('./handlers/gemini');
 const { handleProxy } = require('./handlers/proxy');
 const { handleDebug } = require('./handlers/debug');
 
@@ -90,7 +92,7 @@ async function handleRequest(ctx, req, res) {
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-goog-api-key');
     res.setHeader('Vary', 'Origin');
   }
 
@@ -108,6 +110,26 @@ async function handleRequest(ctx, req, res) {
   if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
     return handleChatCompletions(ctx, req, res);
   }
+
+  // ── Anthropic-compatible endpoints ──
+  // POST /v1/messages — full Anthropic Messages API
+  if (req.method === 'POST' && url.pathname === '/v1/messages') {
+    return handleAnthropicMessages(ctx, req, res);
+  }
+  // POST /v1/messages/count_tokens — preflight mock for Claude CLI / Cherry Studio
+  if (req.method === 'POST' && url.pathname === '/v1/messages/count_tokens') {
+    return handleCountTokens(ctx, req, res);
+  }
+
+  // ── Gemini-native endpoints ──
+  // POST /v1beta/models/:model:generateContent
+  // POST /v1beta/models/:model:streamGenerateContent
+  if (req.method === 'POST' && url.pathname.startsWith('/v1beta/models/')) {
+    const { model, isStream } = parseGeminiPath(url.pathname);
+    req._geminiStream = isStream;
+    return handleGeminiGenerateContent(ctx, req, res, model);
+  }
+
   if (req.method === 'GET' && url.pathname === '/v1/debug') return handleDebug(ctx, req, res);
   if (req.method === 'GET' && url.pathname === '/v1/captures') {
     return sendJson(res, 200, { captures: ctx.capturedPayloads });

@@ -75,4 +75,37 @@ describe('resolveModel', () => {
     assert.equal(result.context, 128000);
     assert.equal(result.output, 16384);
   });
+
+  // ── Short-form aliases (for Anthropic / Gemini API compatibility) ──
+  it('resolves short-form alias claude-sonnet-4-6', () => {
+    const result = resolveModel('claude-sonnet-4-6');
+    assert.equal(result.value, 1035);
+    assert.equal(result.owned_by, 'anthropic');
+  });
+
+  it('resolves short-form alias claude-opus-4-6-thinking', () => {
+    const result = resolveModel('claude-opus-4-6-thinking');
+    assert.equal(result.value, 1026);
+  });
+
+  it('resolves short-form alias gemini-3.1-pro-high', () => {
+    const result = resolveModel('gemini-3.1-pro-high');
+    assert.equal(result.value, 1037);
+    assert.equal(result.owned_by, 'google');
+  });
+
+  it('resolves short-form alias gemini-3.1-pro-low', () => {
+    const result = resolveModel('gemini-3.1-pro-low');
+    assert.equal(result.value, 1036);
+  });
+
+  it('resolves short-form alias gemini-3-flash-agent', () => {
+    const result = resolveModel('gemini-3-flash-agent');
+    assert.equal(result.value, 1018);
+  });
+
+  it('resolves short-form alias gpt-oss-120b-medium', () => {
+    const result = resolveModel('gpt-oss-120b-medium');
+    assert.equal(result.value, 342);
+  });
 });

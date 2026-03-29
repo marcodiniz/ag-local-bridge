@@ -57,6 +57,55 @@ const MODEL_MAP = {
     output: 64000,
     hidden: true,
   },
+  // Short-form aliases (without 'antigravity-' prefix) — compatible with other tools / lbjlaq naming
+  'gemini-3-flash-agent': {
+    value: 1018,
+    name: 'Gemini 3 Flash',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.1-pro-high': {
+    value: 1037,
+    name: 'Gemini 3.1 Pro (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65535,
+    hidden: true,
+  },
+  'gemini-3.1-pro-low': {
+    value: 1036,
+    name: 'Gemini 3.1 Pro (Low)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65535,
+    hidden: true,
+  },
+  'claude-sonnet-4-6': {
+    value: 1035,
+    name: 'Claude Sonnet 4.6 (Thinking)',
+    owned_by: 'anthropic',
+    context: 200000,
+    output: 64000,
+    hidden: true,
+  },
+  'claude-opus-4-6-thinking': {
+    value: 1026,
+    name: 'Claude Opus 4.6 (Thinking)',
+    owned_by: 'anthropic',
+    context: 200000,
+    output: 64000,
+    hidden: true,
+  },
+  'gpt-oss-120b-medium': {
+    value: 342,
+    name: 'GPT-OSS 120B (Medium)',
+    owned_by: 'openai',
+    context: 128000,
+    output: 16384,
+    hidden: true,
+  },
 };
 
 const DEFAULT_MODEL_KEY = 'antigravity-claude-sonnet-4-6';

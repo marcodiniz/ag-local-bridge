@@ -230,6 +230,22 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
     throw new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
   }
 
+  // Auth failure — invalidate sidecar cache so next request triggers re-discovery.
+  // The sidecar may have rotated its CSRF token or restarted.
+  const isAuthError =
+    responseText.length < 500 &&
+    (responseText.includes('PERMISSION_DENIED') ||
+      responseText.includes('Verify your account') ||
+      responseText.includes('403 Forbidden') ||
+      /^(?:HTTP )?401\b/i.test(responseText.trim()));
+
+  if (isAuthError) {
+    log(ctx, '⚠️ Auth failure detected in raw response — invalidating sidecar cache to force re-discovery');
+    ctx.sidecarInfo = null;
+    ctx.sidecarInfoTimestamp = 0;
+    throw new Error(`Auth failure (sidecar cache cleared): ${responseText.substring(0, 200)}`);
+  }
+
   // Parse tool calls from the response if tools were provided
   if (tools && tools.length > 0) {
     return parseToolCalls(responseText);

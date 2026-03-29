@@ -61,7 +61,9 @@ src/
   images.js             # Image extraction from request content
   workspace.js          # VS Code workspace helpers
   handlers/
-    chat.js             # POST /v1/chat/completions
+    chat.js             # POST /v1/chat/completions  (OpenAI format)
+    anthropic.js        # POST /v1/messages + /v1/messages/count_tokens  (Anthropic format)
+    gemini.js           # POST /v1beta/models/:model:generateContent  (Gemini native format)
     models.js           # GET /v1/models
     proxy.js            # Generic proxy fallback
     debug.js            # Debug/status endpoints
@@ -142,9 +144,11 @@ Bypasses Cascade entirely — calls `GetModelResponse` directly on the sidecar.
 
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
-- Timeout: **120 seconds** (LLM inference can be slow)
+- Timeout: **15 minutes** (LLM inference can be very slow)
 - Model enum values: `MODEL_PLACEHOLDER_M18` (Flash), `MODEL_PLACEHOLDER_M37` (Pro High),
   `MODEL_PLACEHOLDER_M36` (Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet), `MODEL_PLACEHOLDER_M26` (Opus)
+- **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
+  `ctx.sidecarInfo` is cleared to force re-discovery on the next request (handles CSRF rotation).
 
 ### RPC (`src/sidecar/rpc.js`)
 
@@ -175,3 +179,43 @@ whenever the base version in `package.json` changes.
 
 - **`beta`** is the **default branch**. All PRs should target `beta`.
 - **`master`** is protected (requires PR). Merge `beta → master` to cut a stable release.
+
+### Multi-Protocol API Support
+
+All three endpoints delegate to the same `callRawInference()` path — the handlers only
+convert the request/response format.
+
+#### OpenAI (`src/handlers/chat.js`)
+
+- `POST /v1/chat/completions` — standard OpenAI Chat Completions format
+- `GET /v1/models` — lists available models
+
+#### Anthropic (`src/handlers/anthropic.js`)
+
+- `POST /v1/messages` — full Anthropic Messages API (streaming + non-streaming)
+  - Converts `tool_use` / `tool_result` blocks ↔ OpenAI `tool_calls` / `tool` messages
+  - Returns proper Anthropic SSE event stream: `message_start`, `content_block_*`, `message_delta`, `message_stop`
+- `POST /v1/messages/count_tokens` — preflight mock (returns `{"input_tokens": 0}`)
+  - Required by Claude CLI and Cherry Studio before every conversation
+
+#### Gemini (`src/handlers/gemini.js`)
+
+- `POST /v1beta/models/:model:generateContent` — Gemini native format
+- `POST /v1beta/models/:model:streamGenerateContent` — streaming variant
+- Accepts `x-goog-api-key` header (no Authorization header needed)
+- Strips `:generateContent` / `:streamGenerateContent` operation suffix from path
+- Converts `contents[].parts[].text` ↔ OpenAI messages, `functionDeclarations` ↔ OpenAI tools
+
+### Model ID Aliases
+
+`src/models.js` supports both the full `antigravity-*` prefixed IDs (shown in `/v1/models`)
+and short-form aliases (hidden from model list) for compatibility with other tools:
+
+| Short alias                | Full ID                                | Enum value |
+| -------------------------- | -------------------------------------- | ---------- |
+| `claude-sonnet-4-6`        | `antigravity-claude-sonnet-4-6`        | 1035       |
+| `claude-opus-4-6-thinking` | `antigravity-claude-opus-4-6-thinking` | 1026       |
+| `gemini-3.1-pro-high`      | `antigravity-gemini-3.1-pro-high`      | 1037       |
+| `gemini-3.1-pro-low`       | `antigravity-gemini-3.1-pro-low`       | 1036       |
+| `gemini-3-flash-agent`     | `antigravity-gemini-3-flash`           | 1018       |
+| `gpt-oss-120b-medium`      | `antigravity-gpt-oss-120b`             | 342        |
