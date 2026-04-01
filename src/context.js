@@ -28,7 +28,7 @@ function createContext() {
     // Sidecar discovery cache
     sidecarInfo: null,
     sidecarInfoTimestamp: 0,
-    SIDECAR_CACHE_TTL: 30000, // 30 seconds
+    SIDECAR_CACHE_TTL: 300000, // 5 minutes (discovery is expensive on Windows)
 
     // Concurrency guard
     chatRequestsInFlight: 0,

@@ -185,8 +185,13 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
   }
   const mainCsrf = info.csrfTokens[0];
 
-  // Find a working LS port
-  const lsPorts = info.actualPorts.filter((p) => p !== info.extensionServerPort);
+  // Find a working LS port — try non-extension ports first, then extension port as fallback.
+  // The LS ports may have died while the extension port stays alive; trying all ports
+  // avoids 'No reachable LS port' when the sidecar recycles its gRPC listeners.
+  const lsPorts = [
+    ...info.actualPorts.filter((p) => p !== info.extensionServerPort),
+    info.extensionServerPort, // last resort — extension port may also serve LS gRPC
+  ];
   let lsPort = null;
   for (const port of lsPorts) {
     try {
@@ -197,7 +202,12 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
       // try next port
     }
   }
-  if (!lsPort) throw new Error('No reachable LS port');
+  if (!lsPort) {
+    // Invalidate sidecar cache so next request re-discovers fresh ports
+    ctx.sidecarInfo = null;
+    ctx.sidecarInfoTimestamp = 0;
+    throw new Error('No reachable LS port');
+  }
 
   // Format the prompt
   const prompt = formatMessagesAsPrompt(messages, tools);
