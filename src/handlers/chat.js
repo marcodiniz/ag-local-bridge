@@ -255,7 +255,8 @@ async function _handleChatCompletionsInner(
       err.message.includes('H2 connect') ||
       err.message.includes('H2 timeout') ||
       err.message.includes('Sidecar not discovered') ||
-      err.message.includes('No reachable LS port');
+      err.message.includes('No reachable LS port') ||
+      err.message.includes('empty content');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit' : 'server_error';
 
