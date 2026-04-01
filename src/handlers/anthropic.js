@@ -179,6 +179,39 @@ async function handleAnthropicMessages(ctx, req, res) {
   ctx.chatRequestsInFlight++;
   log(ctx, `📡 [Anthropic] Requests in flight: ${ctx.chatRequestsInFlight}`);
 
+  let keepAliveTimer = null;
+  let preStreamTimer = null;
+  let headersSentForStream = false;
+
+  const initiateStream = () => {
+    if (isStream && !headersSentForStream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.writeHead(200);
+
+      // message_start
+      writeAnthropicEvent(res, 'message_start', {
+        type: 'message_start',
+        message: buildAnthropicMessage(msgId, resolved.key),
+      });
+      headersSentForStream = true;
+    }
+  };
+
+  if (isStream) {
+    // Force stream headers after 2 seconds to prevent client TTFB timeouts.
+    preStreamTimer = setTimeout(() => {
+      initiateStream();
+    }, 2000);
+
+    // Send a ping event every 4.5s to reset client read timeouts and surface eventual 429s/errors
+    keepAliveTimer = setInterval(() => {
+      initiateStream();
+      writeAnthropicEvent(res, 'ping', { type: 'ping' });
+    }, 4500);
+  }
+
   try {
     log(ctx, `🧠 [Anthropic] Trying raw inference (${modelEnum})...`);
     const raw = await callRawInference(ctx, openAiMessages, modelEnum, openAiTools);
@@ -191,16 +224,7 @@ async function handleAnthropicMessages(ctx, req, res) {
     log(ctx, `✅ [Anthropic] Raw inference succeeded (${responseText.length} chars)`);
 
     if (isStream) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.writeHead(200);
-
-      // message_start
-      writeAnthropicEvent(res, 'message_start', {
-        type: 'message_start',
-        message: buildAnthropicMessage(msgId, resolved.key),
-      });
+      initiateStream(); // Ensure stream has started
 
       if (raw.toolCalls && raw.toolCalls.length > 0) {
         // Emit each tool call as a tool_use block
@@ -281,7 +305,14 @@ async function handleAnthropicMessages(ctx, req, res) {
   } catch (err) {
     log(ctx, `⚠️ [Anthropic] Raw inference failed: ${err.message}`);
     const isRateLimit =
-      err.message.includes('capacity') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
+      err.message.includes('capacity') ||
+      err.message.includes('429') ||
+      err.message.includes('RESOURCE_EXHAUSTED') ||
+      err.message.toLowerCase().includes('sse read timed out') ||
+      err.message.includes('H2 connect') ||
+      err.message.includes('H2 timeout') ||
+      err.message.includes('Sidecar not discovered') ||
+      err.message.includes('No reachable LS port');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit_error' : 'api_error';
     const errBody = { type: 'error', error: { type: errType, message: `Upstream error: ${err.message}` } };
@@ -292,6 +323,8 @@ async function handleAnthropicMessages(ctx, req, res) {
       res.end();
     }
   } finally {
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
+    if (preStreamTimer) clearTimeout(preStreamTimer);
     ctx.chatRequestsInFlight--;
     ctx.lastResponseTimestamp = Date.now();
   }

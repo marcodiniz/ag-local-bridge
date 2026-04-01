@@ -1,0 +1,5 @@
+C:\Users\User\AppData\Roaming\Antigravity\logs\20260331T190056\window4\exthost\output_logging_20260331T190246\4-Antigravity Auto Accept.log
+C:\Users\User\AppData\Roaming\Antigravity\logs\20260331T190056\window1\exthost\google.antigravity\Antigravity.log
+C:\Users\User\AppData\Roaming\Antigravity\logs\20260331T190056\window1\exthost\output_logging_20260331T190104\4-Antigravity Auto Accept.log
+C:\Users\User\AppData\Roaming\Antigravity\logs\20260331T190056\agent-window-console.log
+C:\Users\User\AppData\Roaming\Antigravity\logs\20260331T190056\window4\exthost\output_logging_20260331T190246\3-Toolkit for Antigravity.log

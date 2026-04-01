@@ -12,7 +12,7 @@ const { handleCountTokens } = require('../src/handlers/anthropic');
 
 // ── Minimal mock helpers ──
 
-function makeRes(body = '') {
+function makeRes() {
   const res = {
     _status: null,
     _headers: {},

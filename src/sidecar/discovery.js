@@ -74,18 +74,92 @@ function windowsStrategy(binaryNames) {
   return {
     async findProcess() {
       for (const binaryName of binaryNames) {
-        // ConvertTo-Json avoids Format-List line-wrapping issues inside Electron
-        // (Format-List wraps based on console buffer width, which may be very
-        //  narrow or undefined when running inside the Antigravity extension host)
-        const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
-        const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
-          encoding: 'utf8',
-          timeout: 10000,
-        });
-
-        if (!stdout || !stdout.trim()) continue;
-
+        // Strategy 1 (fastest): tasklist to find PIDs, then wmic for each PID's command line.
+        // tasklist is near-instant and doesn't go through WMI.
         try {
+          const { stdout: taskOut } = await execFileAsync(
+            'tasklist',
+            ['/FI', `IMAGENAME eq ${binaryName}`, '/FO', 'CSV', '/NH'],
+            { encoding: 'utf8', timeout: 3000 },
+          );
+          if (taskOut && taskOut.trim() && !taskOut.includes('No tasks')) {
+            const pids = taskOut
+              .trim()
+              .split('\n')
+              .map((line) => {
+                const m = line.match(/"[^"]+","(\d+)"/);
+                return m ? m[1] : null;
+              })
+              .filter(Boolean);
+
+            // Get command line for each PID (wmic for a single PID is fast)
+            const candidates = [];
+            for (const pid of pids) {
+              try {
+                const { stdout: cmdOut } = await execFileAsync(
+                  'wmic',
+                  ['process', 'where', `ProcessId=${pid}`, 'get', 'CommandLine', '/FORMAT:LIST'],
+                  { encoding: 'utf8', timeout: 3000 },
+                );
+                const cmdMatch = cmdOut && cmdOut.match(/CommandLine=(.+)/);
+                if (cmdMatch) {
+                  candidates.push({ pid, commandLine: cmdMatch[1].trim(), user: '' });
+                }
+              } catch {
+                // wmic failed for this PID — skip it
+              }
+            }
+
+            const best = chooseBestProcess(candidates);
+            if (best) return best;
+          }
+        } catch {
+          // tasklist or wmic unavailable — fall through
+        }
+
+        // Strategy 2: wmic full scan (fast-ish, no PowerShell startup overhead)
+        try {
+          const { stdout } = await execFileAsync(
+            'wmic',
+            ['process', 'where', `Name='${binaryName}'`, 'get', 'ProcessId,CommandLine', '/FORMAT:CSV'],
+            { encoding: 'utf8', timeout: 5000 },
+          );
+          if (stdout && stdout.trim()) {
+            // CSV format: Node,CommandLine,ProcessId (header line + data lines)
+            const lines = stdout
+              .trim()
+              .split('\n')
+              .filter((l) => l.trim() && !l.startsWith('Node'));
+            const candidates = lines
+              .map((line) => {
+                // CSV: hostname,commandline,pid — but commandline may contain commas
+                const parts = line.trim().split(',');
+                if (parts.length < 3) return null;
+                const pid = parts[parts.length - 1].trim();
+                // Everything between first and last comma is the command line
+                const commandLine = parts.slice(1, -1).join(',').trim();
+                return pid && commandLine ? { pid, commandLine, user: '' } : null;
+              })
+              .filter(Boolean);
+
+            const best = chooseBestProcess(candidates);
+            if (best) return best;
+          }
+        } catch {
+          // wmic may not be available on newer Windows — fall through to PowerShell
+        }
+
+        // Strategy 3: PowerShell Get-CimInstance (slowest but universally available)
+        try {
+          const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
+          const { stdout } = await execFileAsync(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', psCmd],
+            { encoding: 'utf8', timeout: 10000 },
+          );
+
+          if (!stdout || !stdout.trim()) continue;
+
           let parsed = JSON.parse(stdout.trim());
           // ConvertTo-Json returns an object when there's 1 result, array when >1
           if (!Array.isArray(parsed)) parsed = [parsed];
@@ -101,21 +175,7 @@ function windowsStrategy(binaryNames) {
           const best = chooseBestProcess(candidates);
           if (best) return best;
         } catch {
-          // Fallback: try Format-List parsing if JSON fails
-          const fallbackCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | Format-List`;
-          const { stdout: flStdout } = await execFileAsync(
-            'powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-Command', fallbackCmd],
-            { encoding: 'utf8', timeout: 10000 },
-          );
-
-          if (flStdout && flStdout.trim()) {
-            const pidMatch = flStdout.match(/ProcessId\s*:\s*(\d+)/);
-            const cmdMatch = flStdout.match(/CommandLine\s*:\s*(.+)/);
-            if (pidMatch && cmdMatch) {
-              return { pid: pidMatch[1], commandLine: cmdMatch[1].trim(), user: '' };
-            }
-          }
+          // All strategies failed for this binary name — try next
         }
       }
 
@@ -264,9 +324,22 @@ function getPlatformStrategy(platformOverride) {
 // Public API
 // ─────────────────────────────────────────────
 
+let _discoveryInFlight = null;
+
 async function discoverSidecar(ctx) {
   if (ctx.sidecarInfo && Date.now() - ctx.sidecarInfoTimestamp < ctx.SIDECAR_CACHE_TTL) return ctx.sidecarInfo;
 
+  // Serialize concurrent discovery calls — only one PowerShell/wmic process at a time.
+  // All concurrent callers share the same in-flight promise.
+  if (_discoveryInFlight) return _discoveryInFlight;
+
+  _discoveryInFlight = _discoverSidecarOnce(ctx).finally(() => {
+    _discoveryInFlight = null;
+  });
+  return _discoveryInFlight;
+}
+
+async function _discoverSidecarOnce(ctx) {
   try {
     const { strategy, binaryNames } = getPlatformStrategy();
 

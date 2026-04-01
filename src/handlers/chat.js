@@ -1,6 +1,5 @@
 'use strict';
 
-const vscode = require('vscode');
 const { randomUUID } = require('crypto');
 const {
   log,
@@ -123,21 +122,23 @@ async function handleChatCompletions(ctx, req, res) {
 
   let keepAliveTimer = null;
   let preStreamTimer = null;
-  let headersSentForStream = false;
+  // Shared mutable flag — must be accessed via closure, never passed by value.
+  const streamState = { headersSent: false };
 
   const initiateStream = () => {
-    if (isStream && !headersSentForStream) {
+    if (isStream && !streamState.headersSent) {
       setupStreamResponse(res);
-      headersSentForStream = true;
+      streamState.headersSent = true;
     }
   };
 
   if (isStream) {
-    // Force stream headers after 2 seconds to prevent client TTFB (Time To First Byte) timeouts.
-    // This still allows fast upstream errors (<2s) to cleanly return HTTP 429 codes with headers.
+    // Force stream headers after 20 seconds to prevent client TTFB (Time To First Byte) timeouts.
+    // This gives sidecar discovery (wmic/PowerShell) and the H2 connection enough time to
+    // fail fast and return a clean HTTP 429 before we commit to HTTP 200.
     preStreamTimer = setTimeout(() => {
       initiateStream();
-    }, 2000);
+    }, 20000);
 
     keepAliveTimer = setInterval(() => {
       initiateStream();
@@ -155,7 +156,7 @@ async function handleChatCompletions(ctx, req, res) {
       res,
       isStream,
       initiateStream,
-      headersSentForStream,
+      streamState,
       messages,
       completionId,
       resolved,
@@ -176,7 +177,7 @@ async function _handleChatCompletionsInner(
   res,
   isStream,
   initiateStream,
-  headersSentForStream,
+  streamState,
   messages,
   completionId,
   resolved,
@@ -247,7 +248,14 @@ async function _handleChatCompletionsInner(
 
     // Enforce 429 for rate limit / capacity errors, otherwise 502 for general upstream/H2 crashes
     const isRateLimit =
-      err.message.includes('capacity') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
+      err.message.includes('capacity') ||
+      err.message.includes('429') ||
+      err.message.includes('RESOURCE_EXHAUSTED') ||
+      err.message.toLowerCase().includes('sse read timed out') ||
+      err.message.includes('H2 connect') ||
+      err.message.includes('H2 timeout') ||
+      err.message.includes('Sidecar not discovered') ||
+      err.message.includes('No reachable LS port');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit' : 'server_error';
 
@@ -268,10 +276,13 @@ async function _handleChatCompletionsInner(
 
     // If we haven't sent stream headers yet, we can send a true HTTP error.
     // The client SDK will correctly read the HTTP status code and Retry-After header.
-    if (isStream && headersSentForStream) {
+    if (isStream && streamState.headersSent) {
+      // Stream already committed to HTTP 200 — inject error as SSE event
       res.write(`data: ${JSON.stringify({ error: errPayload.error })}\n\n`);
+      res.write('data: [DONE]\n\n');
       res.end();
     } else if (!res.headersSent) {
+      // Stream NOT yet committed — return a proper HTTP 429/502 status code
       res.setHeader('Retry-After', String(retryAfterSecs));
       sendJson(res, status, errPayload);
     }

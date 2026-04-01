@@ -1,6 +1,5 @@
 'use strict';
 
-const { randomUUID } = require('crypto');
 const { log, sendJson, readBody } = require('../utils');
 const { resolveModel } = require('../models');
 const { callRawInference } = require('../sidecar/raw');
@@ -174,7 +173,14 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
   } catch (err) {
     log(ctx, `⚠️ [Gemini] Raw inference failed: ${err.message}`);
     const isRateLimit =
-      err.message.includes('capacity') || err.message.includes('429') || err.message.includes('RESOURCE_EXHAUSTED');
+      err.message.includes('capacity') ||
+      err.message.includes('429') ||
+      err.message.includes('RESOURCE_EXHAUSTED') ||
+      err.message.toLowerCase().includes('sse read timed out') ||
+      err.message.includes('H2 connect') ||
+      err.message.includes('H2 timeout') ||
+      err.message.includes('Sidecar not discovered') ||
+      err.message.includes('No reachable LS port');
     const status = isRateLimit ? 429 : 502;
     const errBody = {
       error: {

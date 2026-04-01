@@ -16,7 +16,7 @@ const { handleDebug } = require('./handlers/debug');
 
 async function startServer(ctx) {
   const config = vscode.workspace.getConfiguration('agLocalBridge');
-  const port = config.get('port', 11435);
+  const basePort = config.get('port', 11435);
   if (ctx.server) await stopServer(ctx);
 
   ctx.server = http.createServer((req, res) => {
@@ -33,18 +33,54 @@ async function startServer(ctx) {
     });
   });
 
-  await new Promise((resolve, reject) => {
-    ctx.server.listen(port, '127.0.0.1', () => {
-      log(ctx, `✅ Server running on http://localhost:${port}`);
-      updateStatusBar(ctx, true, port);
-      resolve();
-    });
-    ctx.server.on('error', (err) => {
-      log(ctx, `❌ Server failed: ${err.message}`, true);
+  // Prevent Node's default idle timeout from breaking long-running LLM inferences
+  ctx.server.timeout = 0;
+  ctx.server.keepAliveTimeout = 0;
+
+  let bound = false;
+  const maxRetries = 10;
+  for (let offset = 0; offset <= maxRetries; offset++) {
+    const port = basePort + offset;
+    try {
+      await new Promise((resolve, reject) => {
+        function onError(err) {
+          if (err.code === 'EADDRINUSE') {
+            resolve(false);
+          } else {
+            reject(err);
+          }
+        }
+        ctx.server.once('error', onError);
+        ctx.server.listen(port, '127.0.0.1', () => {
+          ctx.server.removeListener('error', onError);
+          log(ctx, `✅ Server running on http://localhost:${port}`);
+          updateStatusBar(ctx, true, port);
+          resolve(true);
+        });
+      });
+
+      if (ctx.server.listening) {
+        bound = true;
+        // Attach persistent error handler after a successful bind
+        ctx.server.on('error', (err) => {
+          log(ctx, `❌ Server runtime error: ${err.message}`, true);
+          updateStatusBar(ctx, false);
+        });
+        break;
+      }
+    } catch (err) {
+      log(ctx, `❌ Server startup failed: ${err.message}`, true);
       updateStatusBar(ctx, false);
-      reject(err);
-    });
-  });
+      throw err;
+    }
+  }
+
+  if (!bound) {
+    const errMsg = `listen EADDRINUSE: Exhausted ${maxRetries} sequential ports starting at ${basePort}`;
+    log(ctx, `❌ Server failed: ${errMsg}`, true);
+    updateStatusBar(ctx, false);
+    throw new Error(errMsg);
+  }
 }
 
 function stopServer(ctx) {

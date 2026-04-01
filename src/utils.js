@@ -91,6 +91,8 @@ function setupStreamResponse(res) {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.writeHead(200);
+  if (res.flushHeaders) res.flushHeaders();
+  if (res.socket && res.socket.setNoDelay) res.socket.setNoDelay(true);
 }
 
 function sendJson(res, code, payload) {

@@ -130,19 +130,20 @@ describe('discoverSidecar platform dispatch', () => {
     }
   });
 
-  it('uses PowerShell process inspection on win32', async () => {
+  it('uses tasklist then wmic then PowerShell process inspection on win32', async () => {
     const harness = loadDiscoveryWithPlatform('win32', {
+      tasklist: { stdout: '' },
+      wmic: { stdout: '' },
       'powershell.exe': { stdout: '' },
     });
 
     try {
       const result = await harness.discovery.discoverSidecar(createCtx());
       assert.equal(result, null);
-      assert.deepEqual(
-        harness.calls.map((call) => call.file),
-        ['powershell.exe'],
-      );
-      assert.ok(!harness.calls.some((call) => call.file === '/bin/ps'));
+      const executables = harness.calls.map((call) => call.file);
+      // tasklist is tried first (instant), then wmic full scan, then PowerShell as final fallback
+      assert.deepEqual(executables, ['tasklist', 'wmic', 'powershell.exe']);
+      assert.ok(!executables.includes('/bin/ps'));
     } finally {
       harness.restore();
     }

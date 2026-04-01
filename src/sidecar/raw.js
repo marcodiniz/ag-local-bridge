@@ -165,6 +165,8 @@ function parseToolCalls(responseText) {
   };
 }
 
+let inferenceStartMutex = Promise.resolve();
+
 /**
  * Call the sidecar's GetModelResponse for raw LLM inference.
  *
@@ -204,6 +206,17 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
   // Call GetModelResponse with an extended timeout.
   // Large prompts or slow thinking models can take several minutes.
   const INFERENCE_TIMEOUT_MS = 900000; // 15 minutes
+
+  // Throttle concurrent inference requests by 1 second to prevent H2 connection drops
+  // when the client fires multiple simultaneous requests. (We place this exactly before
+  // the http2 connection so that earlier asynchronous delays don't stack them up again).
+  await new Promise((resolve) => {
+    inferenceStartMutex = inferenceStartMutex.then(() => {
+      resolve();
+      return new Promise((r) => setTimeout(r, 1000));
+    });
+  });
+
   const result = await makeH2JsonCall(
     lsPort,
     mainCsrf,
