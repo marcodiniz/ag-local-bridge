@@ -313,7 +313,9 @@ async function handleAnthropicMessages(ctx, req, res) {
       err.message.includes('H2 timeout') ||
       err.message.includes('Sidecar not discovered') ||
       err.message.includes('No reachable LS port') ||
-      err.message.includes('empty content');
+      err.message.includes('empty content') ||
+      err.message.includes('HTTP 500') ||
+      err.message.includes('INTERNAL');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit_error' : 'api_error';
     const errBody = { type: 'error', error: { type: errType, message: `Upstream error: ${err.message}` } };

@@ -61,7 +61,7 @@ src/
   images.js             # Image extraction from request content
   workspace.js          # VS Code workspace helpers
   handlers/
-    chat.js             # POST /v1/chat/completions  (OpenAI format)
+    openai.js           # POST /v1/chat/completions  (OpenAI format)
     anthropic.js        # POST /v1/messages + /v1/messages/count_tokens  (Anthropic format)
     gemini.js           # POST /v1beta/models/:model:generateContent  (Gemini native format)
     models.js           # GET /v1/models

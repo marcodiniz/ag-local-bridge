@@ -29,7 +29,10 @@ function formatMessagesAsPrompt(messages, tools) {
     parts.push('When you need to use a tool, respond with EXACTLY this format (one per line):');
     parts.push('<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>\n');
     parts.push('You may include multiple tool calls. After all tool calls, you may include additional text.');
-    parts.push('The human will execute the tools and return the results enclosed in <observation> tags.\n');
+    parts.push('The human will execute the tools and return the results enclosed in <observation> tags.');
+    parts.push(
+      'CRITICAL: Do NOT simulate tool execution. Do NOT generate <observation> tags yourself. Stop and wait for the human to return the results.\n',
+    );
     for (const tool of tools) {
       if (tool.type === 'function' && tool.function) {
         const fn = tool.function;
@@ -79,15 +82,31 @@ function formatMessagesAsPrompt(messages, tools) {
  * Parse tool calls from the LLM's raw text response.
  * Looks for <tool_call>...</tool_call> blocks and extracts them.
  *
+ * Hallucination fence: only the portion of the response *before* the first
+ * <observation> tag is parsed.  When a raw-inference model runs a self-contained
+ * ReAct loop in one shot it generates:
+ *   <tool_call>A</tool_call>
+ *   <observation>fake result</observation>   ← hallucinated
+ *   <tool_call>B based on fake A</tool_call> ← unreliable!
+ * Discarding everything from the first <observation> onward enforces proper
+ * single-step turn-based tool calling: the client executes real tool(s),
+ * sends real results back, and the model generates the next step using
+ * actual data — the same as OpenAI / Anthropic tool calling.
+ *
  * @returns {{ content: string, toolCalls: Array|null }}
  */
 function parseToolCalls(responseText) {
   const toolCalls = [];
 
+  // ── Hallucination fence ─────────────────────────────────────────────────
+  // Only consider text before the first <observation> tag.
+  const firstObsIdx = responseText.search(/<observation>/i);
+  const parseText = firstObsIdx !== -1 ? responseText.substring(0, firstObsIdx) : responseText;
+
   // Parse 1: Custom JSON `<tool_call>` format
   const toolCallRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
   let match;
-  while ((match = toolCallRegex.exec(responseText)) !== null) {
+  while ((match = toolCallRegex.exec(parseText)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
       toolCalls.push({
@@ -107,7 +126,7 @@ function parseToolCalls(responseText) {
   // Parse 2: Native XML format used by Claude/Minimax (`<invoke>` blocks)
   // Supports `<minimax:tool_call><invoke>...</invoke></minimax:tool_call>` or direct `<invoke>`
   const invokeRegex = /<invoke>\s*<tool_name>([\s\S]*?)<\/tool_name>([\s\S]*?)<\/invoke>/g;
-  while ((match = invokeRegex.exec(responseText)) !== null) {
+  while ((match = invokeRegex.exec(parseText)) !== null) {
     const fnName = match[1].trim();
     const paramBlock = match[2];
     const args = {};
@@ -130,7 +149,7 @@ function parseToolCalls(responseText) {
   // Parse 3: Native Claude 3 format (`<tool_use>` blocks)
   // `<tool_use>\n<name>tool_name</name>\n<input>\n<param_name>value</param_name>\n</input>\n</tool_use>`
   const toolUseRegex = /<tool_use>\s*<name>([\s\S]*?)<\/name>\s*<input>([\s\S]*?)<\/input>\s*<\/tool_use>/g;
-  while ((match = toolUseRegex.exec(responseText)) !== null) {
+  while ((match = toolUseRegex.exec(parseText)) !== null) {
     const fnName = match[1].trim();
     const paramBlock = match[2];
     const args = {};
@@ -151,8 +170,9 @@ function parseToolCalls(responseText) {
     });
   }
 
-  // Remove tool blocks from content to get the pure conversational text
-  let content = responseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
+  // Remove tool blocks from the pre-fence text to get the pure conversational text.
+  // Anything after firstObsIdx is hallucinated ReAct continuation — already excluded.
+  let content = parseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
   content = content.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
   content = content.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, ''); // Common wrapper
   content = content.replace(/<invoke>[\s\S]*?<\/invoke>/g, '');

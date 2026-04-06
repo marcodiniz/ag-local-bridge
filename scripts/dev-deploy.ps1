@@ -90,7 +90,7 @@ foreach ($extDir in $candidates) {
         @{ Path = "$dest\src\extension.js"; Label = "src/extension.js exists" },
         @{ Path = "$dest\src\sidecar\raw.js"; Label = "raw.js exists" },
         @{ Path = "$dest\src\sidecar\rpc.js"; Label = "rpc.js exists" },
-        @{ Path = "$dest\src\handlers\chat.js"; Label = "chat.js exists" }
+        @{ Path = "$dest\src\handlers\openai.js"; Label = "openai.js exists" }
     )
 
     foreach ($check in $checks) {
