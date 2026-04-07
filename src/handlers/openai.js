@@ -265,10 +265,13 @@ async function _handleChatCompletionsInner(
     let retryAfterSecs = 10;
     const match = err.message.match(/reset after (\d+)s/);
     if (match) {
-      retryAfterSecs = parseInt(match[1], 10) + 2;
+      retryAfterSecs = Math.max(10, parseInt(match[1], 10) + 2);
     }
 
-    log(ctx, `🛑 Upstream API error/capacity — returning ${status} to caller (Retry-After: ${retryAfterSecs}s)`);
+    log(
+      ctx,
+      `🛑 [${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
+    );
 
     const errPayload = {
       error: {

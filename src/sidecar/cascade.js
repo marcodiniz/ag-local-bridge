@@ -1,9 +1,7 @@
 'use strict';
 
 const vscode = require('vscode');
-const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { log, verboseLog } = require('../utils');
 const { extractText } = require('../images');
 const { discoverSidecar } = require('./discovery');
@@ -54,35 +52,6 @@ async function callSidecarChat(
     .join('\n');
   const mainCsrf = info.csrfTokens[0];
   const vlog = (msg) => verboseLog(ctx, msg);
-
-  // Save images to temp files so the agent can view them with its tools
-  const savedImagePaths = [];
-  if (images && images.length > 0) {
-    const tmpDir = path.join(os.tmpdir(), 'ag-bridge-images');
-    try {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    } catch {}
-    for (let i = 0; i < images.length; i++) {
-      const img = images[i];
-      if (!img.base64Data) continue;
-      const ext = (img.mimeType || 'image/png').split('/')[1] || 'png';
-      const fileName = `bridge_image_${Date.now()}_${i}.${ext}`;
-      const filePath = path.join(tmpDir, fileName);
-      try {
-        fs.writeFileSync(filePath, Buffer.from(img.base64Data, 'base64'));
-        savedImagePaths.push(filePath);
-        log(ctx, `  🖼️ Saved image ${i + 1} to: ${filePath}`);
-      } catch (e) {
-        log(ctx, `  ⚠️ Failed to save image: ${e.message}`);
-      }
-    }
-    // Prepend image references to the user message so the agent knows to look at them
-    if (savedImagePaths.length > 0) {
-      const imageRefs = savedImagePaths.map((p, i) => `[Attached Image ${i + 1}]: ${p.replace(/\\/g, '/')}`).join('\n');
-      userMessage = `${imageRefs}\n\n${userMessage}`;
-      vlog(`  🖼️ Prepended ${savedImagePaths.length} image path(s) to message`);
-    }
-  }
 
   // Find a working LS port
   const lsPorts = info.actualPorts.filter((p) => p !== info.extensionServerPort);
@@ -211,10 +180,13 @@ async function callSidecarChat(
         },
       },
     };
-    // NOTE: images are handled via temp files — paths are prepended to userMessage above.
-    // The proto `images`/`media` fields cause HTTP 400 unmarshal errors, so we don't send them.
+    // Inject Image Bytes directly into the payload!!
     if (images && images.length > 0) {
-      vlog(`  🖼️ ${images.length} image(s) referenced as temp file paths in message text`);
+      sendPayload.images = images.map((img) => ({
+        base64Data: img.base64Data,
+        mimeType: img.mimeType || 'image/png',
+      }));
+      vlog(`  🖼️ Injected ${images.length} image(s) natively into payload`);
     }
     try {
       const sendBytes = encodeProto('exa.language_server_pb.SendUserCascadeMessageRequest', sendPayload);

@@ -185,6 +185,13 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
       err.message.includes('HTTP 500') ||
       err.message.includes('INTERNAL');
     const status = isRateLimit ? 429 : 502;
+    let retryAfterSecs = 10;
+    const match = err.message.match(/reset after (\d+)s/);
+    if (match) retryAfterSecs = Math.max(10, parseInt(match[1], 10) + 2);
+    log(
+      ctx,
+      `🛑 [Gemini][${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
+    );
     const errBody = {
       error: {
         code: status,
@@ -192,7 +199,10 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
         status: isRateLimit ? 'RESOURCE_EXHAUSTED' : 'INTERNAL',
       },
     };
-    if (!res.headersSent) sendJson(res, status, errBody);
+    if (!res.headersSent) {
+      res.setHeader('Retry-After', String(retryAfterSecs));
+      sendJson(res, status, errBody);
+    }
   } finally {
     ctx.chatRequestsInFlight--;
     ctx.lastResponseTimestamp = Date.now();
