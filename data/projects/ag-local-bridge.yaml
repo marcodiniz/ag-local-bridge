@@ -1,0 +1,4 @@
+name: ag-local-bridge
+repo: https://github.com/marcodiniz/ag-local-bridge
+tagline: Antigravity local OpenAI-compatible API for OpenCode, Aider, Cline, Continue
+description: Exposes Antigravity's Gemini, Claude, and GPT models as a local OpenAI-compatible HTTP API on localhost:11435. Enables any OpenAI-compatible tool to use Antigravity without additional API keys.
