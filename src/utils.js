@@ -145,6 +145,47 @@ function buildCompletion(id, model, content) {
   };
 }
 
+// ─────────────────────────────────────────────
+// Error Parsing Helpers
+// ─────────────────────────────────────────────
+
+/**
+ * Extracts a sensible Retry-After value from a sidecar rate limit message.
+ * Handles formats like 'reset after 42m41s' or 'reset after 45s'.
+ */
+function parseRetryAfter(message) {
+  if (typeof message !== 'string') return 10;
+  // Match either 'reset after 42m41s' or 'reset after 41s'
+  const match = message.match(/reset after (?:(\d+)m)?(\d+)s/);
+  if (match) {
+    const mins = parseInt(match[1] || '0', 10);
+    const secs = parseInt(match[2] || '0', 10);
+    return Math.max(10, mins * 60 + secs + 2);
+  }
+  return 10;
+}
+
+/**
+ * Extracts the inner provider error message from a raw sidecar error string.
+ * Example input: 'HTTP 500: {"code":"unknown","message":"RESOURCE_EXHAUSTED (code 429): You have exhausted..."}'
+ * Output: 'RESOURCE_EXHAUSTED (code 429): You have exhausted...'
+ */
+function extractProviderError(message) {
+  if (typeof message !== 'string') return String(message);
+  try {
+    const jsonMatch = message.match(/HTTP \d+: (\{.*\})/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[1]);
+      if (parsed && typeof parsed.message === 'string') {
+        return parsed.message;
+      }
+    }
+  } catch {
+    // If parsing fails, fall back to returning the full string
+  }
+  return message;
+}
+
 module.exports = {
   log,
   verboseLog,
@@ -154,4 +195,6 @@ module.exports = {
   readBody,
   buildStreamChunk,
   buildCompletion,
+  parseRetryAfter,
+  extractProviderError,
 };

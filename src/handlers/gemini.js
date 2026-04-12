@@ -1,6 +1,6 @@
 'use strict';
 
-const { log, sendJson, readBody } = require('../utils');
+const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
 const { resolveModel } = require('../models');
 const { callRawInference } = require('../sidecar/raw');
 
@@ -185,17 +185,16 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
       err.message.includes('HTTP 500') ||
       err.message.includes('INTERNAL');
     const status = isRateLimit ? 429 : 502;
-    let retryAfterSecs = 10;
-    const match = err.message.match(/reset after (\d+)s/);
-    if (match) retryAfterSecs = Math.max(10, parseInt(match[1], 10) + 2);
+    const retryAfterSecs = parseRetryAfter(err.message);
     log(
       ctx,
       `🛑 [Gemini][${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
     );
+    const cleanMessage = extractProviderError(err.message);
     const errBody = {
       error: {
         code: status,
-        message: `Upstream error: ${err.message}`,
+        message: `Upstream error: ${cleanMessage}`,
         status: isRateLimit ? 'RESOURCE_EXHAUSTED' : 'INTERNAL',
       },
     };

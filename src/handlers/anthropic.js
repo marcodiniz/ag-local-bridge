@@ -1,7 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
-const { log, sendJson, readBody } = require('../utils');
+const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
 const { resolveModel } = require('../models');
 const { callRawInference } = require('../sidecar/raw');
 
@@ -318,14 +318,13 @@ async function handleAnthropicMessages(ctx, req, res) {
       err.message.includes('INTERNAL');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit_error' : 'api_error';
-    let retryAfterSecs = 10;
-    const match = err.message.match(/reset after (\d+)s/);
-    if (match) retryAfterSecs = Math.max(10, parseInt(match[1], 10) + 2);
+    const retryAfterSecs = parseRetryAfter(err.message);
     log(
       ctx,
       `🛑 [Anthropic][${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
     );
-    const errBody = { type: 'error', error: { type: errType, message: `Upstream error: ${err.message}` } };
+    const cleanMessage = extractProviderError(err.message);
+    const errBody = { type: 'error', error: { type: errType, message: `Upstream error: ${cleanMessage}` } };
     if (!res.headersSent) {
       res.setHeader('Retry-After', String(retryAfterSecs));
       sendJson(res, status, errBody);

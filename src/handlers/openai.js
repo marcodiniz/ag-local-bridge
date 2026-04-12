@@ -9,6 +9,8 @@ const {
   readBody,
   buildStreamChunk,
   buildCompletion,
+  parseRetryAfter,
+  extractProviderError,
 } = require('../utils');
 const { extractText, extractAllImages } = require('../images');
 const { resolveModel } = require('../models');
@@ -262,20 +264,17 @@ async function _handleChatCompletionsInner(
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit' : 'server_error';
 
-    let retryAfterSecs = 10;
-    const match = err.message.match(/reset after (\d+)s/);
-    if (match) {
-      retryAfterSecs = Math.max(10, parseInt(match[1], 10) + 2);
-    }
+    const retryAfterSecs = parseRetryAfter(err.message);
 
     log(
       ctx,
       `🛑 [${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
     );
 
+    const cleanMessage = extractProviderError(err.message);
     const errPayload = {
       error: {
-        message: `Upstream model provider error: ${err.message}`,
+        message: `Upstream model provider error: ${cleanMessage}`,
         type: errType,
       },
     };
