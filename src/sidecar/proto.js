@@ -68,6 +68,16 @@ const commonProto = create(FileDescriptorProtoSchema, {
     makeMessage('ModelOrAlias', [makeField('model', 1, 14, '.exa.codeium_common_pb.Model')]),
     makeMessage('ExperimentConfig', []),
     makeMessage('ImageData', [makeField('base64_data', 1, 9), makeField('mime_type', 2, 9)]),
+    makeMessage('Blobref', [makeField('blob_id', 1, 9)]),
+    makeMessage('Media', [
+      makeField('mime_type', 1, 9),
+      makeField('inline_data', 2, 12), // TYPE_BYTES — raw image data
+      makeField('blobref', 3, 11, '.exa.codeium_common_pb.Blobref'),
+      makeField('description', 4, 9),
+      makeField('uri', 5, 9),
+      makeField('thumbnail', 6, 12),
+      makeField('duration_seconds', 7, 2),
+    ]),
   ],
   enumType: [
     makeEnum('Model', {
@@ -141,6 +151,7 @@ const lsProto = create(FileDescriptorProtoSchema, {
       makeField('images', 6, 11, '.exa.codeium_common_pb.ImageData', 3),
       makeField('blocking', 8, 8),
       makeField('client_type', 11, 14, '.exa.chat_client_server_pb.ChatClientRequestStreamClientType'),
+      makeField('media', 14, 11, '.exa.codeium_common_pb.Media', 3),
       makeField('message_origin', 18, 14, '.exa.language_server_pb.AgentMessageOrigin'),
     ]),
     makeMessage('SendUserCascadeMessageResponse', [makeField('queued', 1, 8)]),

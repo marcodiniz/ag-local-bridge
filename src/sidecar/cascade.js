@@ -180,13 +180,14 @@ async function callSidecarChat(
         },
       },
     };
-    // Inject Image Bytes directly into the payload!!
+    // Inject images via the `media` field (field 14) with raw bytes.
+    // The `images` field (field 6) is deprecated and silently ignored by the sidecar.
     if (images && images.length > 0) {
-      sendPayload.images = images.map((img) => ({
-        base64Data: img.base64Data,
+      sendPayload.media = images.map((img) => ({
         mimeType: img.mimeType || 'image/png',
+        inlineData: new Uint8Array(Buffer.from(img.base64Data, 'base64')),
       }));
-      vlog(`  🖼️ Injected ${images.length} image(s) natively into payload`);
+      vlog(`  🖼️ Injected ${images.length} image(s) via media field into payload`);
     }
     try {
       const sendBytes = encodeProto('exa.language_server_pb.SendUserCascadeMessageRequest', sendPayload);
