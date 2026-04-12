@@ -173,7 +173,7 @@ function parseRetryAfter(message) {
 function extractProviderError(message) {
   if (typeof message !== 'string') return String(message);
   try {
-    const jsonMatch = message.match(/HTTP \d+: (\{.*\})/);
+    const jsonMatch = message.match(/HTTP \d+: (\{[\s\S]*\})/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[1]);
       if (parsed && typeof parsed.message === 'string') {
@@ -181,7 +181,11 @@ function extractProviderError(message) {
       }
     }
   } catch {
-    // If parsing fails, fall back to returning the full string
+    // If parsing fails, fall back to string extraction
+    const msgMatch = message.match(/"message"\s*:\s*"([^"]+)"/);
+    if (msgMatch) {
+      return msgMatch[1];
+    }
   }
   return message;
 }

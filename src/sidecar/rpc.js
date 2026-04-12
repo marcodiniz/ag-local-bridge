@@ -56,7 +56,7 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
         if (status === 200) {
           settle(resolve, body);
         } else {
-          settle(reject, new Error(`HTTP ${status}: ${body.toString('utf8').substring(0, 150)}`));
+          settle(reject, new Error(`HTTP ${status}: ${body.toString('utf8').substring(0, 1000)}`));
         }
       });
       req.on('error', (e) => {
@@ -127,7 +127,7 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
         if (status === 200) resolve();
         else {
           const body = Buffer.concat(chunks).toString('utf8');
-          reject(new Error(`HTTP ${status}: ${body.substring(0, 150)}`));
+          reject(new Error(`HTTP ${status}: ${body.substring(0, 1000)}`));
         }
       });
       req.on('error', (e) => {
@@ -249,7 +249,7 @@ function makeConnectRpcCallOnPort(port, csrf, certPath, servicePath, payload) {
             resolve(body);
           }
         } else {
-          reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
+          reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 1000)}`));
         }
       });
     });
@@ -278,7 +278,7 @@ function makeConnectRpcCallOnPort(port, csrf, certPath, servicePath, payload) {
                 resolve(body);
               }
             } else {
-              reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
+              reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 1000)}`));
             }
           });
         });
@@ -307,3 +307,4 @@ module.exports = {
   makeH2ProtoStreamingCall,
   makeConnectRpcCallOnPort,
 };
+
