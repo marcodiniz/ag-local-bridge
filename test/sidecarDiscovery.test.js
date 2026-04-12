@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { getPlatformStrategy, SIDECAR_BINARY_NAMES } = require('../src/sidecar/discovery');
+const { getPlatformStrategy, SIDECAR_BINARY_NAMES, encodeWorkspaceId } = require('../src/sidecar/discovery');
 
 describe('getPlatformStrategy', () => {
   it('uses explicit Apple Silicon-aware binary names on darwin', () => {
@@ -29,5 +29,40 @@ describe('getPlatformStrategy', () => {
 
   it('throws for unsupported platforms', () => {
     assert.throws(() => getPlatformStrategy('freebsd'), /Unsupported platform/);
+  });
+});
+
+describe('encodeWorkspaceId', () => {
+  it('encodes a Windows path with drive letter (real observed example)', () => {
+    // Observed: PID 309976 had --workspace_id file_x_3A_code_marcodiniz_ag_local_bridge
+    assert.equal(
+      encodeWorkspaceId('x:\\code\\marcodiniz\\ag-local-bridge'),
+      'file_x_3A_code_marcodiniz_ag_local_bridge',
+    );
+  });
+
+  it('encodes a Windows path supplied with forward slashes', () => {
+    assert.equal(encodeWorkspaceId('x:/code/marcodiniz/ag-local-bridge'), 'file_x_3A_code_marcodiniz_ag_local_bridge');
+  });
+
+  it('encodes a second Windows workspace (MetePower)', () => {
+    // Observed: PID 228604 had --workspace_id file_x_3A_code_marcodiniz_MetePower
+    assert.equal(encodeWorkspaceId('x:\\code\\marcodiniz\\MetePower'), 'file_x_3A_code_marcodiniz_MetePower');
+  });
+
+  it('is case-insensitive safe — uppercase drive letter normalises identically', () => {
+    // Drive letter casing must not break disambiguation; callers compare toLowerCase()
+    const lower = encodeWorkspaceId('x:\\code\\project');
+    const upper = encodeWorkspaceId('X:\\code\\project');
+    assert.equal(lower.toLowerCase(), upper.toLowerCase());
+  });
+
+  it('encodes a macOS/Linux absolute path', () => {
+    assert.equal(encodeWorkspaceId('/home/user/my-project'), 'file_home_user_my_project');
+  });
+
+  it('strips a leading slash before encoding', () => {
+    // '/home/user/proj' and 'home/user/proj' should yield the same result
+    assert.equal(encodeWorkspaceId('/home/user/proj'), encodeWorkspaceId('home/user/proj'));
   });
 });

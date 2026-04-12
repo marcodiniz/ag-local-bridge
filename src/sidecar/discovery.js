@@ -38,11 +38,48 @@ const SIDECAR_BINARY_NAMES = {
 
 /**
  * @typedef {Object} PlatformStrategy
- * @property {() => Promise<ProcessInfo|null>} findProcess
+ * @property {(currentWorkspaceId: string|null) => Promise<ProcessInfo|null>} findProcess
  * @property {(pid: string) => Promise<number[]>} findListeningPorts
  */
 
-function rankProcessCandidate(proc) {
+/**
+ * Encode a VS Code workspace fsPath to the sidecar's --workspace_id format.
+ * Reverse-engineered from observed sidecar command lines:
+ *   'x:/code/marcodiniz/ag-local-bridge' → 'file_x_3A_code_marcodiniz_ag_local_bridge'
+ *
+ * Algorithm: normalize to forward slashes → strip leading slash →
+ *   replace ':' with '_3A_', '/' with '_', '-' with '_' → prefix 'file_'.
+ */
+function encodeWorkspaceId(fsPath) {
+  // Normalize backslashes to forward slashes, strip any leading slash.
+  const p = fsPath.replace(/\\/g, '/').replace(/^\//, '');
+  // On Windows the path looks like 'x:/code/...'. The sidecar encodes the ':/' root
+  // separator as '_3A_' (absorbing the slash), then maps remaining '/' and '-' to '_'.
+  return (
+    'file_' +
+    p
+      .replace(/:\//, '_3A_') // Windows 'drive:/' root separator — absorb the slash into '_3A_'
+      .replace(/:/g, '_3A_') // any remaining bare ':' (safety fallback)
+      .replace(/\//g, '_') // path directory separators
+      .replace(/-/g, '_') // hyphens
+  );
+}
+
+/**
+ * Return the encoded --workspace_id for the currently active VS Code workspace folder,
+ * or null if no folder is open. Used to disambiguate multiple sidecar instances.
+ */
+function getCurrentWorkspaceId() {
+  try {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return null;
+    return encodeWorkspaceId(folders[0].uri.fsPath);
+  } catch {
+    return null;
+  }
+}
+
+function rankProcessCandidate(proc, currentWorkspaceId) {
   const user = (() => {
     try {
       return os.userInfo().username;
@@ -58,12 +95,27 @@ function rankProcessCandidate(proc) {
   if (proc.commandLine.includes('--server_port')) score += 10;
   if (user && proc.user === user) score += 30;
   if (proc.commandLine.startsWith('/usr/local/bin/')) score -= 40;
+
+  // Prefer workspace-attached sidecars over the bare global instance (no --workspace_id).
+  if (proc.commandLine.includes('--enable_lsp')) score += 30;
+
+  // Strongly prefer the sidecar whose --workspace_id matches the current VS Code workspace.
+  // Case-insensitive to guard against Windows drive-letter casing differences (C: vs c:).
+  if (currentWorkspaceId) {
+    const wsMatch = proc.commandLine.match(/--workspace_id\s+(\S+)/);
+    if (wsMatch && wsMatch[1].toLowerCase() === currentWorkspaceId.toLowerCase()) {
+      score += 200;
+    }
+  }
+
   return score;
 }
 
-function chooseBestProcess(candidates) {
+function chooseBestProcess(candidates, currentWorkspaceId) {
   if (!candidates || candidates.length === 0) return null;
-  return [...candidates].sort((a, b) => rankProcessCandidate(b) - rankProcessCandidate(a))[0];
+  return [...candidates].sort(
+    (a, b) => rankProcessCandidate(b, currentWorkspaceId) - rankProcessCandidate(a, currentWorkspaceId),
+  )[0];
 }
 
 // ─────────────────────────────────────────────
@@ -72,7 +124,7 @@ function chooseBestProcess(candidates) {
 
 function windowsStrategy(binaryNames) {
   return {
-    async findProcess() {
+    async findProcess(currentWorkspaceId) {
       for (const binaryName of binaryNames) {
         // Strategy 1 (fastest): tasklist to find PIDs, then wmic for each PID's command line.
         // tasklist is near-instant and doesn't go through WMI.
@@ -110,7 +162,7 @@ function windowsStrategy(binaryNames) {
               }
             }
 
-            const best = chooseBestProcess(candidates);
+            const best = chooseBestProcess(candidates, currentWorkspaceId);
             if (best) return best;
           }
         } catch {
@@ -142,7 +194,7 @@ function windowsStrategy(binaryNames) {
               })
               .filter(Boolean);
 
-            const best = chooseBestProcess(candidates);
+            const best = chooseBestProcess(candidates, currentWorkspaceId);
             if (best) return best;
           }
         } catch {
@@ -172,7 +224,7 @@ function windowsStrategy(binaryNames) {
               user: '',
             }));
 
-          const best = chooseBestProcess(candidates);
+          const best = chooseBestProcess(candidates, currentWorkspaceId);
           if (best) return best;
         } catch {
           // All strategies failed for this binary name — try next
@@ -206,7 +258,7 @@ function windowsStrategy(binaryNames) {
 
 function darwinStrategy(binaryNames) {
   return {
-    async findProcess() {
+    async findProcess(currentWorkspaceId) {
       const { stdout } = await execFileAsync('/bin/ps', ['aux'], { encoding: 'utf8', timeout: 5000 });
 
       const candidates = stdout
@@ -222,7 +274,7 @@ function darwinStrategy(binaryNames) {
         })
         .filter((proc) => proc.pid && proc.commandLine);
 
-      return chooseBestProcess(candidates);
+      return chooseBestProcess(candidates, currentWorkspaceId);
     },
 
     async findListeningPorts(pid) {
@@ -251,7 +303,7 @@ function darwinStrategy(binaryNames) {
 
 function linuxStrategy(binaryNames) {
   return {
-    async findProcess() {
+    async findProcess(currentWorkspaceId) {
       const { stdout } = await execFileAsync('/bin/ps', ['aux'], { encoding: 'utf8', timeout: 5000 });
 
       const candidates = stdout
@@ -267,7 +319,7 @@ function linuxStrategy(binaryNames) {
         })
         .filter((proc) => proc.pid && proc.commandLine);
 
-      return chooseBestProcess(candidates);
+      return chooseBestProcess(candidates, currentWorkspaceId);
     },
 
     async findListeningPorts(pid) {
@@ -342,9 +394,10 @@ async function discoverSidecar(ctx) {
 async function _discoverSidecarOnce(ctx) {
   try {
     const { strategy, binaryNames } = getPlatformStrategy();
+    const currentWorkspaceId = getCurrentWorkspaceId();
 
-    // 1. Find the sidecar process
-    const proc = await strategy.findProcess();
+    // 1. Find the sidecar process — prefer the one matching this workspace
+    const proc = await strategy.findProcess(currentWorkspaceId);
     if (!proc) {
       log(ctx, `⚠️ Sidecar process not found (looking for ${binaryNames.join(', ')} on ${os.platform()})`);
       return null;
@@ -402,9 +455,14 @@ async function _discoverSidecarOnce(ctx) {
     };
     ctx.sidecarInfoTimestamp = Date.now();
 
+    const wsMatchNote = currentWorkspaceId
+      ? proc.commandLine.match(/--workspace_id\s+(\S+)/)?.[1] === currentWorkspaceId
+        ? ' (workspace match ✅)'
+        : ' (workspace mismatch ⚠️)'
+      : '';
     log(
       ctx,
-      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}`,
+      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}${wsMatchNote}`,
     );
     return ctx.sidecarInfo;
   } catch (err) {
@@ -413,4 +471,4 @@ async function _discoverSidecarOnce(ctx) {
   }
 }
 
-module.exports = { discoverSidecar, SIDECAR_BINARY_NAMES, getPlatformStrategy };
+module.exports = { discoverSidecar, SIDECAR_BINARY_NAMES, getPlatformStrategy, encodeWorkspaceId };
