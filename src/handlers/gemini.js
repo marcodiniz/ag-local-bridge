@@ -3,6 +3,7 @@
 const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
 const { resolveModel } = require('../models');
 const { callRawInference } = require('../sidecar/raw');
+const { sanitizeRequest } = require('../sanitize');
 
 // Map numeric model enum values → GetModelResponse string enum (same as chat.js)
 const VALUE_TO_MODEL_ENUM = {
@@ -92,7 +93,7 @@ function buildGeminiResponse(text, toolCalls, modelKey) {
     candidates: [
       {
         content: { role: 'model', parts },
-        finishReason: toolCalls && toolCalls.length > 0 ? 'STOP' : 'STOP',
+        finishReason: toolCalls && toolCalls.length > 0 ? 'FUNCTION_CALL' : 'STOP',
         index: 0,
         safetyRatings: [],
       },
@@ -129,18 +130,32 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
     return sendJson(res, 400, { error: { code: 400, message: msg, status: 'INVALID_ARGUMENT' } });
   }
 
-  // Convert Gemini → OpenAI format
-  const openAiMessages = geminiContentsToOpenAi(
-    payload.contents,
-    payload.systemInstruction || payload.system_instruction,
-  );
-  const openAiTools = geminiToolsToOpenAi(payload.tools);
-
   // Rate limit guard
   const now = Date.now();
   if (now - ctx.lastResponseTimestamp < ctx.MIN_REQUEST_INTERVAL_MS) {
     return sendJson(res, 429, {
       error: { code: 429, message: 'Rate limited — please wait.', status: 'RESOURCE_EXHAUSTED' },
+    });
+  }
+
+  // Convert Gemini → OpenAI format
+  let openAiMessages = geminiContentsToOpenAi(
+    payload.contents,
+    payload.systemInstruction || payload.system_instruction,
+  );
+  let openAiTools = geminiToolsToOpenAi(payload.tools);
+
+  // Sanitize the converted OpenAI payload
+  const sanitized = sanitizeRequest({
+    messages: openAiMessages,
+    tools: openAiTools,
+  });
+  openAiMessages = sanitized.messages;
+  openAiTools = sanitized.tools;
+
+  if (ctx.chatRequestsInFlight >= ctx.MAX_CONCURRENT_REQUESTS) {
+    return sendJson(res, 429, {
+      error: { code: 429, message: 'Too many concurrent requests.', status: 'RESOURCE_EXHAUSTED' },
     });
   }
 
@@ -183,7 +198,9 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
       err.message.includes('No reachable LS port') ||
       err.message.includes('empty content') ||
       err.message.includes('HTTP 500') ||
-      err.message.includes('INTERNAL');
+      err.message.includes('INTERNAL') ||
+      err.message.includes('ECONNRESET') ||
+      err.message.includes('socket hang up');
     const status = isRateLimit ? 429 : 502;
     const retryAfterSecs = parseRetryAfter(err.message);
     log(

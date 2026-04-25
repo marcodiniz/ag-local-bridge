@@ -4,6 +4,7 @@ const { randomUUID } = require('crypto');
 const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
 const { resolveModel } = require('../models');
 const { callRawInference } = require('../sidecar/raw');
+const { sanitizeRequest } = require('../sanitize');
 
 // Map numeric model enum values → GetModelResponse string enum (same as chat.js)
 const VALUE_TO_MODEL_ENUM = {
@@ -82,6 +83,10 @@ function anthropicMessagesToOpenAi(system, messages) {
     }
 
     if (toolResults.length > 0) {
+      // Prepend any text as a user message before the tool results
+      if (textParts.length > 0) {
+        result.push({ role: 'user', content: textParts.join('') });
+      }
       // User message containing tool results → emit each as a separate `tool` message
       result.push(...toolResults);
     } else if (toolCalls.length > 0) {
@@ -165,14 +170,27 @@ async function handleAnthropicMessages(ctx, req, res) {
     return sendJson(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: msg } });
   }
 
-  // Convert Anthropic → OpenAI format
-  const openAiMessages = anthropicMessagesToOpenAi(payload.system, payload.messages || []);
-  const openAiTools = anthropicToolsToOpenAi(payload.tools);
-
   // Rate limit guard (reuse same limits as OpenAI endpoint)
   const now = Date.now();
   if (now - ctx.lastResponseTimestamp < ctx.MIN_REQUEST_INTERVAL_MS) {
     const errBody = { type: 'error', error: { type: 'rate_limit_error', message: 'Rate limited — please wait.' } };
+    return sendJson(res, 429, errBody);
+  }
+
+  // Convert Anthropic → OpenAI format
+  let openAiMessages = anthropicMessagesToOpenAi(payload.system, payload.messages || []);
+  let openAiTools = anthropicToolsToOpenAi(payload.tools);
+
+  // Sanitize the converted OpenAI payload
+  const sanitized = sanitizeRequest({
+    messages: openAiMessages,
+    tools: openAiTools,
+  });
+  openAiMessages = sanitized.messages;
+  openAiTools = sanitized.tools;
+
+  if (ctx.chatRequestsInFlight >= ctx.MAX_CONCURRENT_REQUESTS) {
+    const errBody = { type: 'error', error: { type: 'rate_limit_error', message: 'Too many concurrent requests.' } };
     return sendJson(res, 429, errBody);
   }
 
@@ -315,7 +333,9 @@ async function handleAnthropicMessages(ctx, req, res) {
       err.message.includes('No reachable LS port') ||
       err.message.includes('empty content') ||
       err.message.includes('HTTP 500') ||
-      err.message.includes('INTERNAL');
+      err.message.includes('INTERNAL') ||
+      err.message.includes('ECONNRESET') ||
+      err.message.includes('socket hang up');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit_error' : 'api_error';
     const retryAfterSecs = parseRetryAfter(err.message);
