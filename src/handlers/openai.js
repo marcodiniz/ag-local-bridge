@@ -14,6 +14,7 @@ const { extractText, extractAllImages } = require('../images');
 const { resolveModel } = require('../models');
 const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
+const { sanitizeRequest } = require('../sanitize');
 
 // Map numeric model enum values → GetModelResponse string enum
 const VALUE_TO_MODEL_ENUM = {
@@ -42,6 +43,7 @@ async function handleChatCompletions(ctx, req, res) {
   // The full body is strictly dumped to the file logs to prevent VSCode UI lag
   verboseLog(ctx, `📥 Request body (${body.length} bytes): ${body.substring(0, 500)}...`, body);
 
+  payload = sanitizeRequest(payload);
   const isStream = payload.stream === true;
   const messages = payload.messages || [];
   const completionId = `chatcmpl-${randomUUID()}`;
@@ -258,7 +260,9 @@ async function _handleChatCompletionsInner(
       err.message.includes('No reachable LS port') ||
       err.message.includes('empty content') ||
       err.message.includes('HTTP 500') ||
-      err.message.includes('INTERNAL');
+      err.message.includes('INTERNAL') ||
+      err.message.includes('ECONNRESET') ||
+      err.message.includes('socket hang up');
     const status = isRateLimit ? 429 : 502;
     const errType = isRateLimit ? 'rate_limit' : 'server_error';
 
