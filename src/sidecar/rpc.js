@@ -69,7 +69,7 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
     setTimeout(() => {
       try {
         client.close();
-      } catch { }
+      } catch {}
       settle(reject, new Error('H2 timeout'));
     }, timeoutMs);
   });
@@ -96,7 +96,7 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
     const timer = setTimeout(() => {
       try {
         client.close();
-      } catch { }
+      } catch {}
       resolve(); // streaming RPC — timeout is normal, means server started streaming
     }, 30000);
 
@@ -123,7 +123,7 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
         clearTimeout(timer);
         try {
           client.close();
-        } catch { }
+        } catch {}
         if (status === 200) resolve();
         else {
           const body = Buffer.concat(chunks).toString('utf8');
@@ -134,7 +134,7 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
         clearTimeout(timer);
         try {
           client.close();
-        } catch { }
+        } catch {}
         if (status === 200 || chunks.length > 0) resolve();
         else reject(e);
       });
@@ -307,4 +307,3 @@ module.exports = {
   makeH2ProtoStreamingCall,
   makeConnectRpcCallOnPort,
 };
-

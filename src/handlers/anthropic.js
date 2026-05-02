@@ -3,6 +3,7 @@
 const { randomUUID } = require('crypto');
 const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
 const { resolveModel } = require('../models');
+const { extractAllImages } = require('../images');
 const { callRawInference } = require('../sidecar/raw');
 const { sanitizeRequest } = require('../sanitize');
 
@@ -54,7 +55,12 @@ function anthropicMessagesToOpenAi(system, messages) {
 
     for (const block of content) {
       if (block.type === 'text') {
-        textParts.push(block.text || '');
+        textParts.push({ type: 'text', text: block.text || '' });
+      } else if (block.type === 'image' && block.source) {
+        textParts.push({
+          type: 'image_url',
+          image_url: { url: `data:${block.source.media_type || 'image/png'};base64,${block.source.data}` },
+        });
       } else if (block.type === 'tool_use') {
         // Anthropic assistant tool call → OpenAI tool_calls
         toolCalls.push({
@@ -83,19 +89,19 @@ function anthropicMessagesToOpenAi(system, messages) {
     }
 
     if (toolResults.length > 0) {
-      // Prepend any text as a user message before the tool results
+      // Prepend any text/images as a user message before the tool results
       if (textParts.length > 0) {
-        result.push({ role: 'user', content: textParts.join('') });
+        result.push({ role: 'user', content: textParts });
       }
       // User message containing tool results → emit each as a separate `tool` message
       result.push(...toolResults);
     } else if (toolCalls.length > 0) {
       // Assistant message with tool calls
-      const msg = { role: 'assistant', content: textParts.join('') || null };
+      const msg = { role: 'assistant', content: textParts };
       msg.tool_calls = toolCalls;
       result.push(msg);
     } else {
-      result.push({ role, content: textParts.join('') });
+      result.push({ role, content: textParts });
     }
   }
 
@@ -230,9 +236,17 @@ async function handleAnthropicMessages(ctx, req, res) {
     }, 4500);
   }
 
+  let images = [];
+  try {
+    images = await extractAllImages(ctx, openAiMessages);
+    if (images.length > 0) log(ctx, `🖼️ Extracted ${images.length} image(s) from Anthropic messages`);
+  } catch (e) {
+    log(ctx, `⚠️ Image extraction failed: ${e.message}`);
+  }
+
   try {
     log(ctx, `🧠 [Anthropic] Trying raw inference (${modelEnum})...`);
-    const raw = await callRawInference(ctx, openAiMessages, modelEnum, openAiTools);
+    const raw = await callRawInference(ctx, openAiMessages, modelEnum, openAiTools, images);
 
     if (!raw || (!raw.content && !raw.toolCalls)) {
       throw new Error('Raw inference returned empty content');

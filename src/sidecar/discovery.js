@@ -122,16 +122,33 @@ function chooseBestProcess(candidates, currentWorkspaceId) {
 // Windows strategy  (PowerShell Get-CimInstance)
 // ─────────────────────────────────────────────
 
+async function execWithFallback(cmdBase, cmdAbsolute, args, options) {
+  try {
+    return await execFileAsync(cmdBase, args, options);
+  } catch (err) {
+    if (err.code === 'ENOENT' && cmdAbsolute) {
+      return await execFileAsync(cmdAbsolute, args, options);
+    }
+    throw err;
+  }
+}
+
 function windowsStrategy(binaryNames) {
   return {
     async findProcess(currentWorkspaceId) {
+      const sysRoot = process.env.SystemRoot || 'C:\\Windows';
+      const tasklistExe = `${sysRoot}\\System32\\tasklist.exe`;
+      const wmicExe = `${sysRoot}\\System32\\wbem\\wmic.exe`;
+      const powershellExe = `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+
       for (const binaryName of binaryNames) {
         // Strategy 1 (fastest): tasklist to find PIDs, then wmic for each PID's command line.
         // tasklist is near-instant and doesn't go through WMI.
         try {
-          const { stdout: taskOut } = await execFileAsync(
+          const { stdout: taskOut } = await execWithFallback(
             'tasklist',
-            ['/FI', `IMAGENAME eq ${binaryName}`, '/FO', 'CSV', '/NH'],
+            tasklistExe,
+            ['/FI', `IMAGENAME eq ${binaryName}`, '/FO', 'CSV', '/NH'], // RESTORED FILTER
             { encoding: 'utf8', timeout: 3000 },
           );
           if (taskOut && taskOut.trim() && !taskOut.includes('No tasks')) {
@@ -148,8 +165,9 @@ function windowsStrategy(binaryNames) {
             const candidates = [];
             for (const pid of pids) {
               try {
-                const { stdout: cmdOut } = await execFileAsync(
+                const { stdout: cmdOut } = await execWithFallback(
                   'wmic',
+                  wmicExe,
                   ['process', 'where', `ProcessId=${pid}`, 'get', 'CommandLine', '/FORMAT:LIST'],
                   { encoding: 'utf8', timeout: 3000 },
                 );
@@ -157,7 +175,7 @@ function windowsStrategy(binaryNames) {
                 if (cmdMatch) {
                   candidates.push({ pid, commandLine: cmdMatch[1].trim(), user: '' });
                 }
-              } catch {
+              } catch (err) {
                 // wmic failed for this PID — skip it
               }
             }
@@ -165,14 +183,15 @@ function windowsStrategy(binaryNames) {
             const best = chooseBestProcess(candidates, currentWorkspaceId);
             if (best) return best;
           }
-        } catch {
+        } catch (err) {
           // tasklist or wmic unavailable — fall through
         }
 
         // Strategy 2: wmic full scan (fast-ish, no PowerShell startup overhead)
         try {
-          const { stdout } = await execFileAsync(
+          const { stdout } = await execWithFallback(
             'wmic',
+            wmicExe,
             ['process', 'where', `Name='${binaryName}'`, 'get', 'ProcessId,CommandLine', '/FORMAT:CSV'],
             { encoding: 'utf8', timeout: 5000 },
           );
@@ -197,15 +216,16 @@ function windowsStrategy(binaryNames) {
             const best = chooseBestProcess(candidates, currentWorkspaceId);
             if (best) return best;
           }
-        } catch {
+        } catch (err) {
           // wmic may not be available on newer Windows — fall through to PowerShell
         }
 
         // Strategy 3: PowerShell Get-CimInstance (slowest but universally available)
         try {
           const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
-          const { stdout } = await execFileAsync(
+          const { stdout } = await execWithFallback(
             'powershell.exe',
+            powershellExe,
             ['-NoProfile', '-NonInteractive', '-Command', psCmd],
             { encoding: 'utf8', timeout: 10000 },
           );
@@ -226,7 +246,7 @@ function windowsStrategy(binaryNames) {
 
           const best = chooseBestProcess(candidates, currentWorkspaceId);
           if (best) return best;
-        } catch {
+        } catch (err) {
           // All strategies failed for this binary name — try next
         }
       }
@@ -235,8 +255,10 @@ function windowsStrategy(binaryNames) {
     },
 
     async findListeningPorts(pid) {
+      const sysRoot = process.env.SystemRoot || 'C:\\Windows';
+      const netstatExe = `${sysRoot}\\System32\\netstat.exe`;
       try {
-        const { stdout } = await execFileAsync('netstat', ['-ano'], { encoding: 'utf8', timeout: 5000 });
+        const { stdout } = await execWithFallback('netstat', netstatExe, ['-ano'], { encoding: 'utf8', timeout: 5000 });
         return stdout
           .split('\n')
           .filter((l) => l.includes(pid) && l.includes('LISTENING'))

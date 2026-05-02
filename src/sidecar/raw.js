@@ -194,9 +194,29 @@ let inferenceStartMutex = Promise.resolve();
  * @param {Array} messages - OpenAI-format messages
  * @param {string} modelEnum - Model enum string (e.g. 'MODEL_PLACEHOLDER_M18')
  * @param {Array|null} tools - OpenAI tool definitions
+ * @param {Array} images - Array of extracted image objects
  * @returns {{ content: string|null, toolCalls: Array|null }}
  */
-async function callRawInference(ctx, messages, modelEnum, tools = null) {
+async function callRawInference(ctx, messages, modelEnum, tools = null, images = []) {
+  if (images && images.length > 0) {
+    log(ctx, `🖼️ Images detected! Raw inference does not support vision. Routing to Cascade API...`);
+    const { callSidecarChat } = require('./cascade');
+
+    const MODEL_ENUM_TO_VALUE = {
+      MODEL_PLACEHOLDER_M18: 1018,
+      MODEL_PLACEHOLDER_M37: 1037,
+      MODEL_PLACEHOLDER_M36: 1036,
+      MODEL_PLACEHOLDER_M35: 1035,
+      MODEL_PLACEHOLDER_M26: 1026,
+      MODEL_PLACEHOLDER_M42: 342,
+    };
+    const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum] || 1035;
+
+    // Cascade is the ONLY endpoint that natively supports the 'media' field for images.
+    const text = await callSidecarChat(ctx, messages, numericModelValue, null, null, images);
+    return { content: text, toolCalls: null };
+  }
+
   const info = await discoverSidecar(ctx);
   if (!info) throw new Error('Sidecar not discovered');
 
@@ -231,6 +251,7 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
 
   // Format the prompt
   const prompt = formatMessagesAsPrompt(messages, tools);
+
   log(ctx, `🧠 Raw inference: ${prompt.length} chars, model=${modelEnum}, tools=${tools ? tools.length : 0}`);
 
   // Call GetModelResponse with an extended timeout.
@@ -247,15 +268,17 @@ async function callRawInference(ctx, messages, modelEnum, tools = null) {
     });
   });
 
+  const reqBody = {
+    prompt,
+    model: modelEnum,
+  };
+
   const result = await makeH2JsonCall(
     lsPort,
     mainCsrf,
     info.certPath,
     'GetModelResponse',
-    {
-      prompt,
-      model: modelEnum,
-    },
+    reqBody,
     1,
     INFERENCE_TIMEOUT_MS,
   );

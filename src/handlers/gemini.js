@@ -2,6 +2,7 @@
 
 const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
 const { resolveModel } = require('../models');
+const { extractAllImages } = require('../images');
 const { callRawInference } = require('../sidecar/raw');
 const { sanitizeRequest } = require('../sanitize');
 
@@ -37,8 +38,15 @@ function geminiContentsToOpenAi(contents, systemInstruction) {
   for (const item of contents || []) {
     const role = item.role === 'model' ? 'assistant' : 'user';
     const parts = item.parts || [];
-    const text = parts.map((p) => p.text || '').join('');
-    messages.push({ role, content: text });
+    const content = [];
+    for (const p of parts) {
+      if (p.text) content.push({ type: 'text', text: p.text });
+      if (p.inlineData || p.inline_data) {
+        const id = p.inlineData || p.inline_data;
+        content.push({ type: 'image_url', image_url: { url: `data:${id.mimeType || 'image/png'};base64,${id.data}` } });
+      }
+    }
+    messages.push({ role, content });
   }
 
   return messages;
@@ -162,9 +170,17 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
   ctx.chatRequestsInFlight++;
   log(ctx, `📡 [Gemini] Requests in flight: ${ctx.chatRequestsInFlight}`);
 
+  let images = [];
+  try {
+    images = await extractAllImages(ctx, openAiMessages);
+    if (images.length > 0) log(ctx, `🖼️ Extracted ${images.length} image(s) from Gemini contents`);
+  } catch (e) {
+    log(ctx, `⚠️ Image extraction failed: ${e.message}`);
+  }
+
   try {
     log(ctx, `🧠 [Gemini] Trying raw inference (${modelEnum})...`);
-    const raw = await callRawInference(ctx, openAiMessages, modelEnum, openAiTools);
+    const raw = await callRawInference(ctx, openAiMessages, modelEnum, openAiTools, images);
 
     if (!raw || (!raw.content && !raw.toolCalls)) {
       throw new Error('Raw inference returned empty content');

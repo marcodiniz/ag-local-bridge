@@ -218,7 +218,7 @@ async function _handleChatCompletionsInner(
 
   try {
     log(ctx, `🧠 Trying raw inference (${modelEnum})...`);
-    const raw = await callRawInference(ctx, messages, modelEnum, tools);
+    const raw = await callRawInference(ctx, messages, modelEnum, tools, images);
     if (raw && (raw.content || raw.toolCalls)) {
       const text = raw.content || '';
       log(ctx, `✅ Raw inference succeeded (${text.length} chars)`);
