@@ -9,12 +9,12 @@ const { sanitizeRequest } = require('../sanitize');
 
 // Map numeric model enum values → GetModelResponse string enum (same as chat.js)
 const VALUE_TO_MODEL_ENUM = {
-  1018: 'MODEL_PLACEHOLDER_M18', // Flash
-  1037: 'MODEL_PLACEHOLDER_M37', // Pro High
+  1018: 'MODEL_PLACEHOLDER_M84', // Flash
+  1037: 'MODEL_PLACEHOLDER_M16', // Pro High
   1036: 'MODEL_PLACEHOLDER_M36', // Pro Low
   1035: 'MODEL_PLACEHOLDER_M35', // Sonnet
   1026: 'MODEL_PLACEHOLDER_M26', // Opus
-  342: 'MODEL_PLACEHOLDER_M42', // GPT-OSS 120B
+  342: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', // GPT-OSS 120B
 };
 
 // ─────────────────────────────────────────────

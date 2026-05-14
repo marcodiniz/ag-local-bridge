@@ -82,11 +82,12 @@ const commonProto = create(FileDescriptorProtoSchema, {
   enumType: [
     makeEnum('Model', {
       MODEL_UNSPECIFIED: 0,
-      MODEL_PLACEHOLDER_M18: 1018,
+      MODEL_PLACEHOLDER_M84: 1018,
       MODEL_PLACEHOLDER_M26: 1026,
       MODEL_PLACEHOLDER_M35: 1035,
       MODEL_PLACEHOLDER_M36: 1036,
-      MODEL_PLACEHOLDER_M37: 1037,
+      MODEL_PLACEHOLDER_M16: 1037,
+      MODEL_OPENAI_GPT_OSS_120B_MEDIUM: 342,
     }),
     makeEnum('ConversationalPlannerMode', {
       CONVERSATIONAL_PLANNER_MODE_UNSPECIFIED: 0,

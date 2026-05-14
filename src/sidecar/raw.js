@@ -4,6 +4,17 @@ const { log, verboseLog } = require('../utils');
 const { extractText } = require('../images');
 const { discoverSidecar } = require('./discovery');
 const { makeH2JsonCall } = require('./rpc');
+const { callSidecarChat } = require('./cascade');
+
+// Map raw-inference string enum → sidecar numeric model value
+const MODEL_ENUM_TO_VALUE = {
+  MODEL_PLACEHOLDER_M84: 1018,
+  MODEL_PLACEHOLDER_M16: 1037,
+  MODEL_PLACEHOLDER_M36: 1036,
+  MODEL_PLACEHOLDER_M35: 1035,
+  MODEL_PLACEHOLDER_M26: 1026,
+  MODEL_OPENAI_GPT_OSS_120B_MEDIUM: 342,
+};
 
 // ─────────────────────────────────────────────
 // Raw Inference via GetModelResponse
@@ -185,7 +196,29 @@ function parseToolCalls(responseText) {
   };
 }
 
-let inferenceStartMutex = Promise.resolve();
+let inferenceQueue = Promise.resolve();
+
+/**
+ * Serialize GetModelResponse calls: only ONE runs at a time, with a 2-second
+ * cooldown between consecutive calls. This prevents the sidecar from returning
+ * RESOURCE_EXHAUSTED when multiple clients fire parallel requests.
+ */
+function enqueueInference(fn) {
+  let resolve, reject;
+  const resultPromise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  inferenceQueue = inferenceQueue.then(async () => {
+    try {
+      resolve(await fn());
+    } catch (err) {
+      reject(err);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  });
+  return resultPromise;
+}
 
 /**
  * Call the sidecar's GetModelResponse for raw LLM inference.
@@ -200,18 +233,7 @@ let inferenceStartMutex = Promise.resolve();
 async function callRawInference(ctx, messages, modelEnum, tools = null, images = []) {
   if (images && images.length > 0) {
     log(ctx, `🖼️ Images detected! Raw inference does not support vision. Routing to Cascade API...`);
-    const { callSidecarChat } = require('./cascade');
-
-    const MODEL_ENUM_TO_VALUE = {
-      MODEL_PLACEHOLDER_M18: 1018,
-      MODEL_PLACEHOLDER_M37: 1037,
-      MODEL_PLACEHOLDER_M36: 1036,
-      MODEL_PLACEHOLDER_M35: 1035,
-      MODEL_PLACEHOLDER_M26: 1026,
-      MODEL_PLACEHOLDER_M42: 342,
-    };
     const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum] || 1035;
-
     // Cascade is the ONLY endpoint that natively supports the 'media' field for images.
     const text = await callSidecarChat(ctx, messages, numericModelValue, null, null, images);
     return { content: text, toolCalls: null };
@@ -258,66 +280,74 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   // Large prompts or slow thinking models can take several minutes.
   const INFERENCE_TIMEOUT_MS = 900000; // 15 minutes
 
-  // Throttle concurrent inference requests by 1 second to prevent H2 connection drops
-  // when the client fires multiple simultaneous requests. (We place this exactly before
-  // the http2 connection so that earlier asynchronous delays don't stack them up again).
-  await new Promise((resolve) => {
-    inferenceStartMutex = inferenceStartMutex.then(() => {
-      resolve();
-      return new Promise((r) => setTimeout(r, 1000));
-    });
-  });
-
   const reqBody = {
     prompt,
     model: modelEnum,
   };
 
-  const result = await makeH2JsonCall(
-    lsPort,
-    mainCsrf,
-    info.certPath,
-    'GetModelResponse',
-    reqBody,
-    1,
-    INFERENCE_TIMEOUT_MS,
-  );
+  // Retry loop for transient RESOURCE_EXHAUSTED / model-not-found errors.
+  // enqueueInference serializes all calls: only 1 GetModelResponse at a time,
+  // with a 2-second cooldown between consecutive calls.
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 5000;
 
-  const responseText = (result && result.response) || '';
-  // Dump full raw LLM token outputs explicitly to the file to trace XML tool generations
-  verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
-  log(ctx, `🧠 Raw response: ${responseText.length} chars`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      log(ctx, `⏳ Retry ${attempt}/${MAX_RETRIES} after ${RETRY_DELAY_MS / 1000}s backoff...`);
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+    }
 
-  // Check if upstream silently returned a Google API proxy error as plaintext
-  if (
-    responseText.includes("Method doesn't allow unregistered callers") ||
-    responseText.includes('RESOURCE_EXHAUSTED')
-  ) {
-    throw new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
+    try {
+      const result = await enqueueInference(() =>
+        makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetModelResponse', reqBody, 1, INFERENCE_TIMEOUT_MS),
+      );
+
+      const responseText = (result && result.response) || '';
+      verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
+      log(ctx, `🧠 Raw response: ${responseText.length} chars`);
+
+      // Check if upstream silently returned a Google API proxy error as plaintext
+      if (
+        responseText.includes("Method doesn't allow unregistered callers") ||
+        responseText.includes('RESOURCE_EXHAUSTED')
+      ) {
+        throw new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
+      }
+
+      // Auth failure — invalidate sidecar cache so next request triggers re-discovery.
+      const isAuthError =
+        responseText.length < 500 &&
+        (responseText.includes('PERMISSION_DENIED') ||
+          responseText.includes('Verify your account') ||
+          responseText.includes('403 Forbidden') ||
+          /^(?:HTTP )?401\b/i.test(responseText.trim()));
+
+      if (isAuthError) {
+        log(ctx, '⚠️ Auth failure detected in raw response — invalidating sidecar cache to force re-discovery');
+        ctx.sidecarInfo = null;
+        ctx.sidecarInfoTimestamp = 0;
+        throw new Error(`Auth failure (sidecar cache cleared): ${responseText.substring(0, 200)}`);
+      }
+
+      // Success — parse tool calls if applicable and return
+      if (tools && tools.length > 0) {
+        return parseToolCalls(responseText);
+      }
+      return { content: responseText, toolCalls: null };
+    } catch (err) {
+      const errMsg = err.message || '';
+      const isRetryable =
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('model not found') ||
+        errMsg.includes('unknown model key');
+
+      if (attempt < MAX_RETRIES && isRetryable) {
+        log(ctx, `⚠️ Raw inference attempt ${attempt + 1} failed: ${errMsg.substring(0, 100)}`);
+        continue;
+      }
+      throw err;
+    }
   }
-
-  // Auth failure — invalidate sidecar cache so next request triggers re-discovery.
-  // The sidecar may have rotated its CSRF token or restarted.
-  const isAuthError =
-    responseText.length < 500 &&
-    (responseText.includes('PERMISSION_DENIED') ||
-      responseText.includes('Verify your account') ||
-      responseText.includes('403 Forbidden') ||
-      /^(?:HTTP )?401\b/i.test(responseText.trim()));
-
-  if (isAuthError) {
-    log(ctx, '⚠️ Auth failure detected in raw response — invalidating sidecar cache to force re-discovery');
-    ctx.sidecarInfo = null;
-    ctx.sidecarInfoTimestamp = 0;
-    throw new Error(`Auth failure (sidecar cache cleared): ${responseText.substring(0, 200)}`);
-  }
-
-  // Parse tool calls from the response if tools were provided
-  if (tools && tools.length > 0) {
-    return parseToolCalls(responseText);
-  }
-
-  return { content: responseText, toolCalls: null };
 }
 
 module.exports = { callRawInference, formatMessagesAsPrompt, parseToolCalls };
