@@ -46,7 +46,7 @@ async function callSidecarChat(
   const info = await discoverSidecar(ctx);
   if (!info) throw new Error('Sidecar not discovered');
 
-  let userMessage = messages
+  const userMessage = messages
     .filter((m) => m.role === 'user')
     .map((m) => extractText(m.content))
     .join('\n');
@@ -205,7 +205,9 @@ async function callSidecarChat(
     const maxWait = 300000; // Wait up to 5 minutes, thinking models can be very slow
     let shouldRetry = false;
     while (Date.now() - pollStart < maxWait) {
-      await new Promise((r) => setTimeout(r, 1500));
+      const elapsedMs = Date.now() - pollStart;
+      const pollDelay = elapsedMs < 10000 ? ctx.CASCADE_POLL_INTERVAL_MS || 350 : 1000;
+      await new Promise((r) => setTimeout(r, pollDelay));
       const elapsed = Math.round((Date.now() - pollStart) / 1000);
       try {
         const traj = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetCascadeTrajectory', { cascadeId });

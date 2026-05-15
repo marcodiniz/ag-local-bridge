@@ -220,6 +220,35 @@ function enqueueInference(fn) {
   return resultPromise;
 }
 
+function getRawEndpointKey(info, csrf) {
+  return `${info.pid}:${csrf}:${(info.actualPorts || []).join(',')}`;
+}
+
+function getCandidatePorts(info) {
+  return [
+    ...new Set([...(info.actualPorts || []).filter((p) => p !== info.extensionServerPort), info.extensionServerPort]),
+  ];
+}
+
+async function callGetModelResponseOnPort(ctx, info, csrf, port, prompt, modelEnum, timeoutMs) {
+  return makeH2JsonCall(
+    port,
+    csrf,
+    info.certPath,
+    'GetModelResponse',
+    {
+      prompt,
+      model: modelEnum,
+    },
+    1,
+    timeoutMs,
+  );
+}
+
+function clearRawEndpoint(ctx) {
+  ctx.rawInferenceEndpoint = null;
+}
+
 /**
  * Call the sidecar's GetModelResponse for raw LLM inference.
  *
@@ -247,30 +276,6 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   }
   const mainCsrf = info.csrfTokens[0];
 
-  // Find a working LS port — try non-extension ports first, then extension port as fallback.
-  // The LS ports may have died while the extension port stays alive; trying all ports
-  // avoids 'No reachable LS port' when the sidecar recycles its gRPC listeners.
-  const lsPorts = [
-    ...info.actualPorts.filter((p) => p !== info.extensionServerPort),
-    info.extensionServerPort, // last resort — extension port may also serve LS gRPC
-  ];
-  let lsPort = null;
-  for (const port of lsPorts) {
-    try {
-      await makeH2JsonCall(port, mainCsrf, info.certPath, 'GetStatus', {});
-      lsPort = port;
-      break;
-    } catch {
-      // try next port
-    }
-  }
-  if (!lsPort) {
-    // Invalidate sidecar cache so next request re-discovers fresh ports
-    ctx.sidecarInfo = null;
-    ctx.sidecarInfoTimestamp = 0;
-    throw new Error('No reachable LS port');
-  }
-
   // Format the prompt
   const prompt = formatMessagesAsPrompt(messages, tools);
 
@@ -280,16 +285,12 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   // Large prompts or slow thinking models can take several minutes.
   const INFERENCE_TIMEOUT_MS = 900000; // 15 minutes
 
-  const reqBody = {
-    prompt,
-    model: modelEnum,
-  };
-
   // Retry loop for transient RESOURCE_EXHAUSTED / model-not-found errors.
-  // enqueueInference serializes all calls: only 1 GetModelResponse at a time,
-  // with a 2-second cooldown between consecutive calls.
   const MAX_RETRIES = 2;
   const RETRY_DELAY_MS = 5000;
+
+  const endpointKey = getRawEndpointKey(info, mainCsrf);
+  const candidatePorts = getCandidatePorts(info);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -298,9 +299,53 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
     }
 
     try {
-      const result = await enqueueInference(() =>
-        makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetModelResponse', reqBody, 1, INFERENCE_TIMEOUT_MS),
-      );
+      // Slightly stagger concurrent inference requests to avoid H2 connection drops
+      // when the client fires multiple simultaneous requests.
+      await new Promise((resolve) => {
+        inferenceStartMutex = inferenceStartMutex.then(() => {
+          resolve();
+          return new Promise((r) => setTimeout(r, ctx.RAW_INFERENCE_START_SPACING_MS || 100));
+        });
+      });
+
+      const cached = ctx.rawInferenceEndpoint;
+      const portsToTry =
+        cached && cached.key === endpointKey
+          ? [cached.port, ...candidatePorts.filter((p) => p !== cached.port)]
+          : candidatePorts;
+
+      let result;
+      let lastError = null;
+      for (const port of portsToTry) {
+        try {
+          result = await callGetModelResponseOnPort(ctx, info, mainCsrf, port, prompt, modelEnum, INFERENCE_TIMEOUT_MS);
+          ctx.rawInferenceEndpoint = { key: endpointKey, port, lastUsed: Date.now() };
+          break;
+        } catch (err) {
+          lastError = err;
+          if (cached && cached.port === port) clearRawEndpoint(ctx);
+          const msg = String(err && err.message ? err.message : err);
+          const shouldFailover =
+            msg.includes('H2 connect') ||
+            msg.includes('H2 timeout') ||
+            msg.includes('WRONG_VERSION_NUMBER') ||
+            msg.includes('SSL routines') ||
+            msg.includes('disconnected') ||
+            msg.includes('EPIPE') ||
+            msg.includes('socket hang up') ||
+            msg.includes('ECONNRESET') ||
+            msg.includes('HTTP 500') ||
+            msg.includes('internal error');
+          if (!shouldFailover) break;
+        }
+      }
+
+      if (!result) {
+        ctx.sidecarInfo = null;
+        ctx.sidecarInfoTimestamp = 0;
+        clearRawEndpoint(ctx);
+        throw lastError || new Error('No reachable raw inference port');
+      }
 
       const responseText = (result && result.response) || '';
       verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);

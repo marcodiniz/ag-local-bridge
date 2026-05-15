@@ -24,7 +24,7 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 ## Features
 
 - **OpenAI-compatible API** — drop-in replacement for any tool expecting OpenAI format
-- **Image support** — paste screenshots or attach images from OpenAI clients; images are saved to temp files and referenced in the message so the agent can view them
+- **Multimedia input support** — images, audio, video, and files from OpenAI/Responses clients are forwarded through Antigravity's media channel when possible
 - **Workspace-aware** — automatically detects and sets the correct project context via `x-workspace-dir` / `x-workspace-uri` headers
 - **Conversation multiplexing** — reuses Cascade conversations for efficiency, with automatic retry on capacity errors
 - **Streaming & non-streaming** — both modes supported
@@ -91,32 +91,32 @@ Add to `~/.config/opencode/opencode.json`:
       "models": {
         "antigravity-claude-sonnet-4-6": {
           "name": "Claude Sonnet 4.6 (Antigravity)",
-          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "modalities": { "input": ["text", "image", "audio", "video", "file"], "output": ["text"] },
           "limit": { "context": 200000, "output": 64000 }
         },
         "antigravity-claude-opus-4-6-thinking": {
           "name": "Claude Opus 4.6 Thinking (Antigravity)",
-          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "modalities": { "input": ["text", "image", "audio", "video", "file"], "output": ["text"] },
           "limit": { "context": 200000, "output": 64000 }
         },
         "antigravity-gemini-3.1-pro-high": {
           "name": "Gemini 3.1 Pro High (Antigravity)",
-          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "modalities": { "input": ["text", "image", "audio", "video", "file"], "output": ["text"] },
           "limit": { "context": 1048576, "output": 65535 }
         },
         "antigravity-gemini-3.1-pro-low": {
           "name": "Gemini 3.1 Pro Low (Antigravity)",
-          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "modalities": { "input": ["text", "image", "audio", "video", "file"], "output": ["text"] },
           "limit": { "context": 1048576, "output": 65535 }
         },
         "antigravity-gemini-3-flash": {
           "name": "Gemini 3 Flash (Antigravity)",
-          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "modalities": { "input": ["text", "image", "audio", "video", "file"], "output": ["text"] },
           "limit": { "context": 1048576, "output": 65536 }
         },
         "antigravity-gpt-oss-120b": {
           "name": "GPT-OSS 120B Medium (Antigravity)",
-          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "modalities": { "input": ["text", "image", "audio", "video", "file"], "output": ["text"] },
           "limit": { "context": 128000, "output": 16384 }
         }
       }
@@ -127,7 +127,7 @@ Add to `~/.config/opencode/opencode.json`:
 
 Then select `ag-local-bridge/antigravity-claude-sonnet-4-6` as your model.
 
-> **Image support**: The `modalities` field enables image input (clipboard paste, file attach). Images are saved to temp files and the agent views them with its built-in file tools.
+> **Media support**: The `modalities` field enables image/audio/video/file input in clients that expose those attachments. Text-only requests use the faster raw inference path; requests with media use the Antigravity Cascade media channel.
 
 ### With curl
 
@@ -164,6 +164,14 @@ curl http://localhost:11435/v1/chat/completions \
     ]}],
     "stream": false
   }'
+
+# Responses API
+curl http://localhost:11435/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "antigravity-claude-sonnet-4-6",
+    "input": "Hello from the Responses API"
+  }'
 ```
 
 ### With any OpenAI-compatible client
@@ -179,18 +187,20 @@ API Key:  anything (not validated)
 | ------ | ---------------------- | ------------------------------------------- |
 | `GET`  | `/v1/models`           | List available models                       |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming & non-streaming) |
+| `POST` | `/v1/responses`        | OpenAI Responses API adapter                |
 | `POST` | `/v1/proxy`            | Forward arbitrary RPC to sidecar            |
 | `GET`  | `/v1/debug`            | Debug info (sidecar ports, CSRF, captures)  |
 
-## Image Support
+## Multimedia Support
 
-Images sent via the OpenAI `image_url` content type are handled as follows:
+Media sent via OpenAI chat content parts or Responses input items is handled as follows:
 
-1. **Base64 data URLs** (`data:image/png;base64,...`) — decoded and saved to a temp file
-2. **Remote URLs** (`https://...`) — downloaded, then saved to a temp file
-3. **File URIs** (`file:///C:/path/to/image.png`) — read directly from disk
+1. **Base64 data URLs** (`data:image/png;base64,...`, `data:audio/wav;base64,...`, etc.) — decoded and forwarded inline
+2. **Remote URLs** (`https://...`) — downloaded, then forwarded inline
+3. **File URIs** (`file:///C:/path/to/media.mp4`) — read directly from disk
+4. **Responses items** (`input_image`, `input_audio`, `input_file`) — converted to the same media channel
 
-The image file path is prepended to the message text so the Antigravity agent can use its `view_file` tool to inspect the image.
+The sidecar ultimately decides which model/media combinations are accepted. Unsupported media types will surface as upstream provider errors.
 
 ## Workspace Context
 

@@ -8,6 +8,7 @@ const { promisify } = require('util');
 const { execFile } = require('child_process');
 const execFileAsync = promisify(execFile);
 const { log } = require('../utils');
+const { makeH2JsonCall } = require('./rpc');
 
 // ─────────────────────────────────────────────
 // Sidecar Discovery (cross-platform)
@@ -116,6 +117,22 @@ function chooseBestProcess(candidates, currentWorkspaceId) {
   return [...candidates].sort(
     (a, b) => rankProcessCandidate(b, currentWorkspaceId) - rankProcessCandidate(a, currentWorkspaceId),
   )[0];
+}
+
+async function probeH2LanguageServerPorts(ports, extensionServerPort, csrf, certPath) {
+  if (!csrf) return [];
+  const lsPorts = ports.filter((p) => p !== extensionServerPort);
+  const results = await Promise.all(
+    lsPorts.map(async (port) => {
+      try {
+        await makeH2JsonCall(port, csrf, certPath, 'GetAvailableCascadePlugins', {}, 0, 1500);
+        return port;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter(Boolean);
 }
 
 // ─────────────────────────────────────────────
@@ -468,9 +485,18 @@ async function _discoverSidecarOnce(ctx) {
       ),
     ];
 
+    const extensionServerPort = parseInt(extPortMatch[1]);
+    const h2HealthyPorts = await probeH2LanguageServerPorts(portsToTry, extensionServerPort, csrfTokens[0], certPath);
+    const orderedPorts = [
+      extensionServerPort,
+      ...h2HealthyPorts,
+      ...portsToTry.filter((p) => p !== extensionServerPort && !h2HealthyPorts.includes(p)),
+    ];
+
     ctx.sidecarInfo = {
-      extensionServerPort: parseInt(extPortMatch[1]),
-      actualPorts: portsToTry,
+      extensionServerPort,
+      actualPorts: orderedPorts,
+      h2HealthyPorts,
       csrfTokens,
       certPath,
       pid,
@@ -484,7 +510,7 @@ async function _discoverSidecarOnce(ctx) {
       : '';
     log(
       ctx,
-      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${portsToTry.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}${wsMatchNote}`,
+      `✅ Sidecar discovered on ${os.platform()}: PID=${pid} ports=[${orderedPorts.join(',')}] h2=[${h2HealthyPorts.join(',')}] tokens=${csrfTokens.length} cert=${certPath ? 'yes' : 'no'}${wsMatchNote}`,
     );
     return ctx.sidecarInfo;
   } catch (err) {
