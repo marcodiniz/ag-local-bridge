@@ -172,22 +172,33 @@ function parseRetryAfter(message) {
  */
 function extractProviderError(message) {
   if (typeof message !== 'string') return String(message);
+  let extracted = message;
   try {
     const jsonMatch = message.match(/HTTP \d+: (\{[\s\S]*\})/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[1]);
       if (parsed && typeof parsed.message === 'string') {
-        return parsed.message;
+        extracted = parsed.message;
+      }
+    } else {
+      const msgMatch = message.match(/"message"\s*:\s*"([^"]+)"/);
+      if (msgMatch) {
+        extracted = msgMatch[1];
       }
     }
   } catch {
-    // If parsing fails, fall back to string extraction
+    // If parsing fails, fall back to regex
     const msgMatch = message.match(/"message"\s*:\s*"([^"]+)"/);
     if (msgMatch) {
-      return msgMatch[1];
+      extracted = msgMatch[1];
     }
   }
-  return message;
+
+  // Clarify Google's confusing 'check quota' message which is actually a TPM/RPM rate limit
+  if (extracted.includes('RESOURCE_EXHAUSTED')) {
+    return `Google API Rate Limit (TPM/RPM) exceeded. Please wait a minute for limits to reset, or reduce your context size. (Google's raw error: ${extracted})`;
+  }
+  return extracted;
 }
 
 module.exports = {

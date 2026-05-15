@@ -314,6 +314,14 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
         throw new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
       }
 
+      if (responseText.trim().length === 0) {
+        return {
+          content:
+            '⚠️ **Inference Blocked**: The model returned an empty response. This usually occurs when the prompt triggers a Google API safety filter (e.g. sensitive code, PII, or security flags) or encounters a silent internal error. Please modify your prompt and try again.',
+          toolCalls: null,
+        };
+      }
+
       // Auth failure — invalidate sidecar cache so next request triggers re-discovery.
       const isAuthError =
         responseText.length < 500 &&
