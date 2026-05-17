@@ -306,10 +306,13 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
       verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
       log(ctx, `🧠 Raw response: ${responseText.length} chars`);
 
-      // Check if upstream silently returned a Google API proxy error as plaintext
+      // Check if upstream silently returned a Google API proxy error as plaintext.
+      // Only flag short responses (< 1000 chars) — longer responses are valid completions
+      // where the model may quote these strings while discussing error-handling code.
       if (
-        responseText.includes("Method doesn't allow unregistered callers") ||
-        responseText.includes('RESOURCE_EXHAUSTED')
+        responseText.length < 1000 &&
+        (responseText.includes("Method doesn't allow unregistered callers") ||
+          responseText.includes('RESOURCE_EXHAUSTED'))
       ) {
         throw new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
       }
