@@ -5,6 +5,7 @@ const { log, sendJson } = require('../utils');
 const { MODEL_MAP, DEFAULT_MODEL_KEY } = require('../models');
 const { discoverSidecar } = require('../sidecar/discovery');
 const { makeH2JsonCall, makeConnectRpcCallOnPort } = require('../sidecar/rpc');
+const { getSwarmCooldowns } = require('../sidecar/swarm');
 
 // ─────────────────────────────────────────────
 // Debug & Diagnostics
@@ -31,6 +32,11 @@ async function handleDebug(ctx, req, res) {
   // Sidecar
   const info = await discoverSidecar(ctx);
   result.sidecar = info || { error: 'Not found' };
+
+  // Swarm Status
+  result.swarm = {
+    cooldowns: getSwarmCooldowns(),
+  };
 
   // LM
   try {
@@ -200,6 +206,17 @@ async function showStatus(ctx) {
   log(ctx, '─── AG Local Bridge Status ───');
   log(ctx, `  Server: ${ctx.server ? `✅ http://localhost:${port}` : '❌ Stopped'}`);
   log(ctx, `  Sidecar: ${info ? `✅ port ${info.extensionServerPort}` : '❌ Not found'}`);
+
+  const cooldowns = getSwarmCooldowns();
+  const cooldownPids = Object.keys(cooldowns);
+  if (cooldownPids.length > 0) {
+    log(ctx, `  Swarm Quota Exhaustion Cooldowns:`);
+    for (const pid of cooldownPids) {
+      log(ctx, `    PID ${pid}: ${JSON.stringify(cooldowns[pid])}`);
+    }
+  } else {
+    log(ctx, `  Swarm Quotas: All healthy`);
+  }
 }
 
 module.exports = { handleDebug, probeSidecar, diagnoseModels, diagnoseCommands, showStatus };

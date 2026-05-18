@@ -40,7 +40,7 @@ describe('Responses API adapter', () => {
     assert.equal(payload.messages[0].content[2].type, 'input_audio');
   });
 
-  it('converts chat completions into Responses shape', () => {
+  it('converts chat completions into Responses shape and translates token counts', () => {
     const response = chatToResponsesPayload(
       {
         id: 'chatcmpl-1',
@@ -55,6 +55,52 @@ describe('Responses API adapter', () => {
     assert.equal(response.model, 'test-model');
     assert.equal(response.output_text, 'hello');
     assert.equal(response.output[0].content[0].type, 'output_text');
+    assert.equal(response.usage.input_tokens, 1);
+    assert.equal(response.usage.output_tokens, 2);
     assert.equal(response.usage.total_tokens, 3);
+  });
+
+  it('normalizes Responses input with function_call and function_call_output parts', () => {
+    const inputParts = [
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'function_call',
+            name: 'get_weather',
+            call_id: 'call-123',
+            arguments: '{"location":"London"}',
+          },
+        ],
+      },
+      {
+        type: 'message',
+        role: 'user',
+        content: [
+          {
+            type: 'function_call_output',
+            call_id: 'call-123',
+            output: '{"temp": 15}',
+          },
+        ],
+      },
+    ];
+    const messages = normalizeResponsesInput(inputParts);
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].role, 'assistant');
+    assert.deepEqual(messages[0].tool_calls, [
+      {
+        id: 'call-123',
+        type: 'function',
+        function: {
+          name: 'get_weather',
+          arguments: '{"location":"London"}',
+        },
+      },
+    ]);
+    assert.equal(messages[1].role, 'tool');
+    assert.equal(messages[1].tool_call_id, 'call-123');
+    assert.equal(messages[1].content, '{"temp": 15}');
   });
 });

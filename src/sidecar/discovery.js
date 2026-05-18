@@ -8,7 +8,7 @@ const { promisify } = require('util');
 const { execFile } = require('child_process');
 const execFileAsync = promisify(execFile);
 const { log } = require('../utils');
-const { makeH2JsonCall } = require('./rpc');
+const { makeH2JsonCall, clearH2Clients } = require('./rpc');
 
 // ─────────────────────────────────────────────
 // Sidecar Discovery (cross-platform)
@@ -431,6 +431,7 @@ async function discoverSidecar(ctx) {
 }
 
 async function _discoverSidecarOnce(ctx) {
+  clearH2Clients();
   try {
     const { strategy, binaryNames } = getPlatformStrategy();
     const currentWorkspaceId = getCurrentWorkspaceId();

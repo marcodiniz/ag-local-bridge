@@ -22,7 +22,36 @@ function normalizeResponsesInput(input, instructions) {
     if (!item || typeof item !== 'object') continue;
 
     if (item.type === 'message') {
-      messages.push({ role: item.role || 'user', content: item.content || '' });
+      const msg = { role: item.role || 'user', content: item.content || '' };
+      if (Array.isArray(item.content)) {
+        const fnCallPart = item.content.find((p) => p && p.type === 'function_call');
+        if (fnCallPart) {
+          msg.content = null;
+          msg.tool_calls = [
+            {
+              id: fnCallPart.call_id || fnCallPart.id,
+              type: 'function',
+              function: {
+                name: fnCallPart.name || '',
+                arguments:
+                  typeof fnCallPart.arguments === 'string'
+                    ? fnCallPart.arguments
+                    : JSON.stringify(fnCallPart.arguments || {}),
+              },
+            },
+          ];
+        }
+        const fnOutputPart = item.content.find((p) => p && p.type === 'function_call_output');
+        if (fnOutputPart) {
+          msg.role = 'tool';
+          msg.tool_call_id = fnOutputPart.call_id || fnOutputPart.id;
+          msg.content =
+            typeof fnOutputPart.output === 'string'
+              ? fnOutputPart.output
+              : JSON.stringify(fnOutputPart.output !== undefined ? fnOutputPart.output : {});
+        }
+      }
+      messages.push(msg);
       continue;
     }
 
@@ -38,6 +67,35 @@ function normalizeResponsesInput(input, instructions) {
 
     if (item.type === 'input_image' || item.type === 'input_audio' || item.type === 'input_file') {
       messages.push({ role: 'user', content: [item] });
+      continue;
+    }
+
+    if (item.type === 'function_call') {
+      messages.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: item.call_id || item.id,
+            type: 'function',
+            function: {
+              name: item.name || '',
+              arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {}),
+            },
+          },
+        ],
+      });
+      continue;
+    }
+
+    if (item.type === 'function_call_output') {
+      messages.push({
+        role: 'tool',
+        tool_call_id: item.call_id || item.id,
+        content:
+          typeof item.output === 'string' ? item.output : JSON.stringify(item.output !== undefined ? item.output : {}),
+      });
+      continue;
     }
   }
 
@@ -89,6 +147,16 @@ function chatToResponsesPayload(chat, originalModel) {
     });
   }
 
+  let usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+  if (chat && chat.usage) {
+    const u = chat.usage;
+    usage = {
+      input_tokens: u.input_tokens !== undefined ? u.input_tokens : u.prompt_tokens || 0,
+      output_tokens: u.output_tokens !== undefined ? u.output_tokens : u.completion_tokens || 0,
+      total_tokens: u.total_tokens !== undefined ? u.total_tokens : (u.prompt_tokens || 0) + (u.completion_tokens || 0),
+    };
+  }
+
   return {
     id,
     object: 'response',
@@ -97,7 +165,7 @@ function chatToResponsesPayload(chat, originalModel) {
     model: (chat && chat.model) || originalModel,
     output,
     output_text: text,
-    usage: (chat && chat.usage) || { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    usage,
   };
 }
 
@@ -272,7 +340,7 @@ function patchResponsesStream(res, model) {
 
   res.write = (chunk) => {
     const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
-    const matches = [...text.matchAll(/^data:s*(.+)$/gm)];
+    const matches = [...text.matchAll(/^data:\s*(.+)$/gm)];
     if (matches.length === 0) return originalWrite(chunk);
 
     let wrote = false;
@@ -321,7 +389,10 @@ function patchResponsesStream(res, model) {
         wrote = true;
       }
     }
-    return wrote;
+    if (!wrote) {
+      originalWrite(': keepalive\n\n');
+    }
+    return true;
   };
 }
 
@@ -338,6 +409,9 @@ function createBodyRequest(req, payload) {
       if (event === 'data') process.nextTick(() => cb(Buffer.from(body)));
       if (event === 'end') process.nextTick(() => cb());
       return this;
+    },
+    destroy() {
+      listeners.clear();
     },
   };
 }

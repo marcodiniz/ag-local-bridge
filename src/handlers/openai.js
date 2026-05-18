@@ -16,7 +16,6 @@ const { extractText, extractAllMedia } = require('../images');
 const { resolveModel } = require('../models');
 const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
-const { callSidecarChat } = require('../sidecar/cascade');
 const { sanitizeRequest } = require('../sanitize');
 
 // Map numeric model enum values → GetModelResponse string enum

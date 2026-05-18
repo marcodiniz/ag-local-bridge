@@ -22,8 +22,8 @@ function getCachedCa(certPath) {
 
 const h2Clients = new Map();
 
-function getH2Client(port, certPath) {
-  const key = `${port}`;
+function getH2Client(port, csrf, certPath) {
+  const key = `${port}:${csrf}:${certPath || ''}`;
   if (h2Clients.has(key)) {
     const client = h2Clients.get(key);
     if (!client.closed && !client.destroyed) {
@@ -59,6 +59,17 @@ function getH2Client(port, certPath) {
   return client;
 }
 
+function clearH2Clients() {
+  for (const [key, client] of h2Clients.entries()) {
+    try {
+      if (!client.closed && !client.destroyed) {
+        client.close();
+      }
+    } catch {}
+    h2Clients.delete(key);
+  }
+}
+
 // ─────────────────────────────────────────────
 // ConnectRPC communication with the sidecar
 // ─────────────────────────────────────────────
@@ -73,7 +84,7 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
   return new Promise((resolve, reject) => {
     let client;
     try {
-      client = getH2Client(port, certPath);
+      client = getH2Client(port, csrf, certPath);
     } catch (err) {
       return reject(new Error('H2 connect: ' + err.message));
     }
@@ -82,10 +93,15 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
     let status;
     const chunks = [];
     let settled = false;
+    let timer = null;
 
     const settle = (fn, val) => {
       if (!settled) {
         settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
         fn(val);
       }
     };
@@ -126,7 +142,7 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
     req.write(payload);
     req.end();
 
-    setTimeout(() => {
+    timer = setTimeout(() => {
       if (!settled) {
         try {
           req.close(http2.constants.NGHTTP2_CANCEL);
@@ -147,7 +163,7 @@ function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, pay
   return new Promise((resolve, reject) => {
     let client;
     try {
-      client = getH2Client(port, certPath);
+      client = getH2Client(port, csrf, certPath);
     } catch (err) {
       return reject(new Error('H2 connect: ' + err.message));
     }
@@ -373,4 +389,5 @@ module.exports = {
   makeH2ProtoCall,
   makeH2ProtoStreamingCall,
   makeConnectRpcCallOnPort,
+  clearH2Clients,
 };

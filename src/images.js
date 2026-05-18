@@ -103,8 +103,54 @@ function mediaFromDataUrl(url) {
   return { base64Data: match[2], mimeType: match[1] };
 }
 
+const MAX_MEDIA_BYTES = 10 * 1024 * 1024; // 10MB limit
+
+function isPrivateUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === 'localhost' || hostname === '::1') return true;
+
+    // Check IPv4 ranges
+    // 127.0.0.1/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
+    const ipv4Regex = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
+    const match = hostname.match(ipv4Regex);
+    if (match) {
+      const o1 = parseInt(match[1], 10);
+      const o2 = parseInt(match[2], 10);
+      if (o1 === 127 || o1 === 10) return true;
+      if (o1 === 172 && o2 >= 16 && o2 <= 31) return true;
+      if (o1 === 192 && o2 === 168) return true;
+      if (o1 === 169 && o2 === 254) return true;
+      if (o1 === 0) return true;
+    }
+
+    // Simple IPv6 check
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+      const ipv6 = hostname.slice(1, -1);
+      if (
+        ipv6 === '::1' ||
+        ipv6 === '::' ||
+        ipv6.startsWith('fe80:') ||
+        ipv6.startsWith('fc00:') ||
+        ipv6.startsWith('fd00:')
+      ) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return true; // invalid URLs are treated as unsafe
+  }
+}
+
 function mediaFromFile(ctx, filePath, mimeType) {
   try {
+    const stats = fs.statSync(filePath);
+    if (stats.size > MAX_MEDIA_BYTES) {
+      if (ctx.outputChannel) ctx.outputChannel.appendLine(`⚠️ Media file too large (${stats.size} bytes): ${filePath}`);
+      return null;
+    }
     const data = fs.readFileSync(filePath);
     return { base64Data: data.toString('base64'), mimeType: mimeType || mimeFromPath(filePath) };
   } catch (e) {
@@ -224,19 +270,38 @@ async function extractAllImages(ctx, messages) {
   return media.filter((item) => String(item.mimeType || '').startsWith('image/'));
 }
 
-function fetchMediaAsBase64(url, fallbackMimeType) {
+function fetchMediaAsBase64(url, fallbackMimeType, redirectDepth = 0) {
   return new Promise((resolve, reject) => {
+    if (redirectDepth > 5) {
+      return reject(new Error('Max redirect depth exceeded'));
+    }
+    if (isPrivateUrl(url)) {
+      return reject(new Error('Access to private/loopback IP is forbidden'));
+    }
+
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, { timeout: 15000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchMediaAsBase64(res.headers.location, fallbackMimeType).then(resolve, reject);
+        return fetchMediaAsBase64(res.headers.location, fallbackMimeType, redirectDepth + 1).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode} fetching media`));
       }
       const chunks = [];
-      res.on('data', (d) => chunks.push(d));
+      let totalBytes = 0;
+      res.on('data', (d) => {
+        totalBytes += d.length;
+        if (totalBytes > MAX_MEDIA_BYTES) {
+          req.destroy(new Error('Media exceeds size limit'));
+          res.destroy();
+          return;
+        }
+        chunks.push(d);
+      });
       res.on('end', () => {
+        if (totalBytes > MAX_MEDIA_BYTES) {
+          return reject(new Error('Media exceeds size limit'));
+        }
         const buf = Buffer.concat(chunks);
         const contentType = res.headers['content-type'] || fallbackMimeType || 'application/octet-stream';
         const mimeType = contentType.split(';')[0].trim();
