@@ -445,14 +445,28 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
  * Original single-sidecar inference path (unchanged from before).
  */
 async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, timeoutMs) {
-  const mainCsrf = info.csrfTokens[0];
   const MAX_RETRIES = 2;
   const RETRY_DELAY_MS = 5000;
+  const triedAccountEmails = new Set();
 
-  const endpointKey = getRawEndpointKey(info, mainCsrf);
-  const candidatePorts = getCandidatePorts(info);
+  try {
+    const vscode = require('vscode');
+    const activeAccount = await vscode.commands.executeCommand('ag.getActiveAccount');
+    if (activeAccount && activeAccount.email) {
+      triedAccountEmails.add(activeAccount.email);
+    }
+  } catch (e) {
+    // Switchboard not active or initialized
+  }
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const mainCsrf = info.csrfTokens ? info.csrfTokens[0] : null;
+    if (!mainCsrf) {
+      throw new Error('Sidecar discovered but no CSRF tokens available');
+    }
+    const endpointKey = getRawEndpointKey(info, mainCsrf);
+    const candidatePorts = getCandidatePorts(info);
+
     if (attempt > 0) {
       log(ctx, `⏳ Retry ${attempt}/${MAX_RETRIES} after ${RETRY_DELAY_MS / 1000}s backoff...`);
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
@@ -555,6 +569,84 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
       return { content: responseText, toolCalls: null };
     } catch (err) {
       const errMsg = err.message || '';
+      const isRateLimitOrAuth =
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes("Method doesn't allow unregistered callers") ||
+        errMsg.includes('Auth failure') ||
+        errMsg.includes('PERMISSION_DENIED') ||
+        errMsg.includes('Forbidden') ||
+        errMsg.includes('401') ||
+        errMsg.includes('403') ||
+        errMsg.includes('WRONG_VERSION_NUMBER') ||
+        errMsg.includes('SSL routines') ||
+        errMsg.includes('Upstream model provider error') ||
+        errMsg.includes('pending stream has been canceled');
+
+      if (isRateLimitOrAuth) {
+        let accounts = [];
+        let activeAccount = null;
+        try {
+          const vscode = require('vscode');
+          accounts = (await vscode.commands.executeCommand('ag.getAccounts')) || [];
+          activeAccount = await vscode.commands.executeCommand('ag.getActiveAccount');
+        } catch (e) {
+          log(ctx, `⚠️ Switchboard commands not available: ${e.message}`);
+        }
+
+        if (accounts.length > 1) {
+          const currentIndex = activeAccount
+            ? accounts.findIndex((a) => a.id === activeAccount.id || a.email === activeAccount.email)
+            : 0;
+
+          let nextAccount = null;
+          for (let offset = 1; offset <= accounts.length; offset++) {
+            const idx = (currentIndex + offset) % accounts.length;
+            const candidate = accounts[idx];
+            if (candidate && candidate.email && !triedAccountEmails.has(candidate.email)) {
+              nextAccount = candidate;
+              break;
+            }
+          }
+
+          if (nextAccount) {
+            log(
+              ctx,
+              `🔄 Rate limit/Auth issue encountered (${errMsg.substring(0, 100)}). Rotating silently to next account: ${nextAccount.email}`,
+            );
+            try {
+              const vscode = require('vscode');
+              const success = await vscode.commands.executeCommand('ag.switchAccount', nextAccount.id, true);
+              if (success) {
+                triedAccountEmails.add(nextAccount.email);
+                log(ctx, `⏳ Waiting 2 seconds for account switch to propagate to sidecar...`);
+                await new Promise((r) => setTimeout(r, 2000));
+
+                // Clear discovery cache to force re-discovery
+                ctx.sidecarInfo = null;
+                ctx.sidecarInfoTimestamp = 0;
+                clearRawEndpoint(ctx);
+
+                // Re-discover sidecar for the new account!
+                const freshInfo = await discoverSidecar(ctx);
+                if (freshInfo && freshInfo.csrfTokens && freshInfo.csrfTokens.length > 0) {
+                  info = freshInfo;
+                }
+
+                // Reset attempt counter so we get full retries on the new account
+                attempt = 0;
+                continue;
+              } else {
+                log(ctx, `❌ Failed to switch to account: ${nextAccount.email}`);
+              }
+            } catch (switchErr) {
+              log(ctx, `❌ Error calling switchAccount: ${switchErr.message}`);
+            }
+          } else {
+            log(ctx, `❌ All tracked accounts (${accounts.length}) have been exhausted.`);
+          }
+        }
+      }
+
       const isRetryable =
         errMsg.includes('RESOURCE_EXHAUSTED') ||
         errMsg.includes('model not found') ||

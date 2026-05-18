@@ -12,7 +12,18 @@ const { getSwarmCooldowns } = require('../sidecar/swarm');
 // ─────────────────────────────────────────────
 
 async function handleDebug(ctx, req, res) {
-  const result = { sidecar: {}, interceptedAuth: {}, lm: {}, chatAPI: {} };
+  const result = { sidecar: {}, interceptedAuth: {}, lm: {}, chatAPI: {}, commands: [] };
+
+  const url = new URL(req.url, 'http://localhost');
+  const switchId = url.searchParams.get('switch');
+  if (switchId) {
+    try {
+      const success = await vscode.commands.executeCommand('ag.switchAccount', switchId, true);
+      result.switchResult = { success, target: switchId };
+    } catch (e) {
+      result.switchResult = { error: e.message };
+    }
+  }
 
   // Intercepted CSRF
   result.interceptedAuth = {
@@ -28,6 +39,40 @@ async function handleDebug(ctx, req, res) {
     timeSinceLastResponseSec: Math.round((Date.now() - ctx.lastResponseTimestamp) / 1000),
     uptimeSec: Math.round((Date.now() - (ctx.lastResponseTimestamp || Date.now())) / 1000), // approximate
   };
+
+  // Commands
+  try {
+    const all = await vscode.commands.getCommands(true);
+    result.commands = all.filter(
+      (c) =>
+        c.toLowerCase().includes('antigravity') ||
+        c.toLowerCase().includes('jetski') ||
+        c.toLowerCase().includes('cascade') ||
+        c.startsWith('ag.'),
+    );
+  } catch (e) {
+    result.commands = { error: e.message };
+  }
+
+  // Switchboard status
+  result.switchboard = { accounts: [], active: null };
+  try {
+    const rawAccounts = await vscode.commands.executeCommand('ag.getAccounts');
+    result.switchboard.accounts = (rawAccounts || []).map((acc) => ({
+      id: acc.id,
+      email: acc.email,
+      name: acc.name,
+      isActive: acc.isActive,
+    }));
+  } catch (e) {
+    result.switchboard.accountsError = e.message;
+  }
+  try {
+    const rawActive = await vscode.commands.executeCommand('ag.getActiveAccount');
+    result.switchboard.active = rawActive ? { id: rawActive.id, email: rawActive.email, name: rawActive.name } : null;
+  } catch (e) {
+    result.switchboard.activeError = e.message;
+  }
 
   // Sidecar
   const info = await discoverSidecar(ctx);
