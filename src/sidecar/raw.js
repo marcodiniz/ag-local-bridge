@@ -8,7 +8,7 @@ const { callSidecarChat } = require('./cascade');
 
 // Map raw-inference string enum → sidecar numeric model value
 const MODEL_ENUM_TO_VALUE = {
-  MODEL_PLACEHOLDER_M84: 1018,
+  MODEL_PLACEHOLDER_M18: 1018,
   MODEL_PLACEHOLDER_M16: 1037,
   MODEL_PLACEHOLDER_M36: 1036,
   MODEL_PLACEHOLDER_M35: 1035,

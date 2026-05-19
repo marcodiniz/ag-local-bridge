@@ -145,7 +145,7 @@ Bypasses Cascade entirely — calls `GetModelResponse` directly on the sidecar.
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
 - Timeout: **15 minutes** (LLM inference can be very slow)
-- Model enum values: `MODEL_PLACEHOLDER_M84` (Flash), `MODEL_PLACEHOLDER_M16` (Pro High),
+- Model enum values: `MODEL_PLACEHOLDER_M18` (Flash), `MODEL_PLACEHOLDER_M16` (Pro High),
   `MODEL_PLACEHOLDER_M36` (Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet), `MODEL_PLACEHOLDER_M26` (Opus), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
 - **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
   `ctx.sidecarInfo` is cleared to force re-discovery on the next request (handles CSRF rotation).
