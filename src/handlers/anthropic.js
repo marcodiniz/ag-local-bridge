@@ -168,6 +168,12 @@ async function handleAnthropicMessages(ctx, req, res) {
 
   // Resolve model
   const resolved = resolveModel(payload.model);
+  if (!resolved) {
+    return sendJson(res, 404, {
+      type: 'error',
+      error: { type: 'not_found_error', message: `Unknown model '${payload.model}'. Use GET /v1/models for available ids.` },
+    });
+  }
   log(ctx, `📡 [Anthropic] Model: ${resolved.key} (enum=${resolved.value})`);
 
   const modelEnum = VALUE_TO_MODEL_ENUM[resolved.value];

@@ -60,9 +60,17 @@ describe('resolveModel', () => {
     assert.equal(result.key, DEFAULT_MODEL_KEY);
   });
 
-  it('returns default for completely unknown model', () => {
+  // ── Unknown models ──
+  it('returns null for completely unknown model', () => {
     const result = resolveModel('gpt-4-turbo-preview-2024');
-    assert.equal(result.key, DEFAULT_MODEL_KEY);
+    assert.equal(result, null);
+  });
+
+  it('returns null for unknown antigravity-prefixed model', () => {
+    // Regression: the bare 'antigravity' alias used to partial-match any
+    // 'antigravity-*' id, silently routing unknown models to the default model.
+    const result = resolveModel('antigravity-gemini-9.9-ultra');
+    assert.equal(result, null);
   });
 
   // ── Result shape ──

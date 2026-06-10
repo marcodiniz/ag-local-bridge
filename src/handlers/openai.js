@@ -99,6 +99,15 @@ async function handleChatCompletions(ctx, req, res) {
 
   // Resolve model from request
   const resolved = resolveModel(payload.model);
+  if (!resolved) {
+    return sendJson(res, 404, {
+      error: {
+        message: `Unknown model '${payload.model}'. Use GET /v1/models for available ids.`,
+        type: 'invalid_request_error',
+        code: 'model_not_found',
+      },
+    });
+  }
   log(ctx, `📡 Model: ${resolved.key} (enum=${resolved.value})`);
 
   // Resolve workspace

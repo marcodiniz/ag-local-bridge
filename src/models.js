@@ -118,9 +118,15 @@ function resolveModel(requestedModel) {
   // Try partial match (e.g. "claude-sonnet" matches "claude-sonnet-4.6")
   const lower = requestedModel.toLowerCase();
   for (const [k, v] of Object.entries(MODEL_MAP)) {
+    // Skip the bare 'antigravity' alias here: every 'antigravity-*' id contains it,
+    // so any unknown 'antigravity-<model>' would silently resolve to the default model.
+    if (k === 'antigravity') continue;
     if (k.includes(lower) || lower.includes(k)) return { key: k, ...v };
   }
-  return { key: DEFAULT_MODEL_KEY, ...MODEL_MAP[DEFAULT_MODEL_KEY] };
+  // Unknown model: return null so handlers can reply 404. Falling back to the
+  // default model here would mean callers believe they are talking to the model
+  // they asked for while actually getting the default — undiagnosable misrouting.
+  return null;
 }
 
 module.exports = { MODEL_MAP, DEFAULT_MODEL_KEY, resolveModel };
