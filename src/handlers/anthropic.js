@@ -10,6 +10,9 @@ const { sanitizeRequest } = require('../sanitize');
 // Map numeric model enum values → GetModelResponse string enum (same as chat.js)
 const VALUE_TO_MODEL_ENUM = {
   1018: 'MODEL_PLACEHOLDER_M18', // Flash
+  1040: 'MODEL_PLACEHOLDER_M132', // 3.5 Flash High
+  1041: 'MODEL_PLACEHOLDER_M20', // 3.5 Flash Medium
+  1042: 'MODEL_PLACEHOLDER_M187', // 3.5 Flash Low
   1037: 'MODEL_PLACEHOLDER_M16', // Pro High
   1036: 'MODEL_PLACEHOLDER_M36', // Pro Low
   1035: 'MODEL_PLACEHOLDER_M35', // Sonnet

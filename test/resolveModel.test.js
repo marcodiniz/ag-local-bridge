@@ -20,6 +20,12 @@ describe('resolveModel', () => {
     assert.equal(result.owned_by, 'anthropic');
   });
 
+  it('resolves Gemini 3.5 Flash tiers', () => {
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash').value, 1040);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash-medium').value, 1041);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash-low').value, 1042);
+  });
+
   it('resolves hidden alias "antigravity" to default model', () => {
     const result = resolveModel('antigravity');
     assert.equal(result.key, DEFAULT_MODEL_KEY);
@@ -110,6 +116,12 @@ describe('resolveModel', () => {
   it('resolves short-form alias gemini-3-flash-agent', () => {
     const result = resolveModel('gemini-3-flash-agent');
     assert.equal(result.value, 1018);
+  });
+
+  it('resolves short-form alias gemini-3.5-flash tiers', () => {
+    assert.equal(resolveModel('gemini-3.5-flash').value, 1040);
+    assert.equal(resolveModel('gemini-3.5-flash-medium').value, 1041);
+    assert.equal(resolveModel('gemini-3.5-flash-low').value, 1042);
   });
 
   it('resolves short-form alias gpt-oss-120b-medium', () => {

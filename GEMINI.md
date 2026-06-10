@@ -145,8 +145,11 @@ Bypasses Cascade entirely — calls `GetModelResponse` directly on the sidecar.
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
 - Timeout: **15 minutes** (LLM inference can be very slow)
-- Model enum values: `MODEL_PLACEHOLDER_M18` (Flash), `MODEL_PLACEHOLDER_M16` (Pro High),
+- Model enum values: `MODEL_PLACEHOLDER_M18` (Flash), `MODEL_PLACEHOLDER_M132` (3.5 Flash High),
+  `MODEL_PLACEHOLDER_M20` (3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (3.5 Flash Low), `MODEL_PLACEHOLDER_M16` (Pro High),
   `MODEL_PLACEHOLDER_M36` (Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet), `MODEL_PLACEHOLDER_M26` (Opus), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
+- The authoritative label ↔ enum-name table can be queried live from the sidecar via the
+  `GetCascadeModelConfigData` RPC (e.g. through the bridge's own `/v1/proxy` debug endpoint)
 - **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
   `ctx.sidecarInfo` is cleared to force re-discovery on the next request (handles CSRF rotation).
 
@@ -218,4 +221,11 @@ and short-form aliases (hidden from model list) for compatibility with other too
 | `gemini-3.1-pro-high`      | `antigravity-gemini-3.1-pro-high`      | 1037       |
 | `gemini-3.1-pro-low`       | `antigravity-gemini-3.1-pro-low`       | 1036       |
 | `gemini-3-flash-agent`     | `antigravity-gemini-3-flash`           | 1018       |
+| `gemini-3.5-flash`         | `antigravity-gemini-3.5-flash`         | 1040 ⚠     |
+| `gemini-3.5-flash-medium`  | `antigravity-gemini-3.5-flash-medium`  | 1041 ⚠     |
+| `gemini-3.5-flash-low`     | `antigravity-gemini-3.5-flash-low`     | 1042 ⚠     |
+
+⚠ Values 1040–1042 are **bridge-internal indices only**, not Cascade wire enums — the
+`GetCascadeModelConfigData` RPC exposes string enum names without numerics. Do not add
+them to the protobuf maps in `src/sidecar/proto.js` / `src/sidecar/raw.js`.
 | `gpt-oss-120b-medium`      | `antigravity-gpt-oss-120b`             | 342        |

@@ -13,6 +13,31 @@ const MODEL_MAP = {
     context: 1048576,
     output: 65536,
   },
+  // Gemini 3.5 Flash tiers — string enums confirmed against the sidecar's
+  // GetCascadeModelConfigData RPC (it returns label ↔ enum-name pairs only,
+  // so the numeric `value`s below are bridge-internal indices, not wire values;
+  // they must stay out of the Cascade protobuf maps in sidecar/raw.js & proto.js).
+  'antigravity-gemini-3.5-flash': {
+    value: 1040,
+    name: 'Gemini 3.5 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
+  'antigravity-gemini-3.5-flash-medium': {
+    value: 1041,
+    name: 'Gemini 3.5 Flash (Medium)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
+  'antigravity-gemini-3.5-flash-low': {
+    value: 1042,
+    name: 'Gemini 3.5 Flash (Low)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
   'antigravity-gemini-3.1-pro-high': {
     value: 1037,
     name: 'Gemini 3.1 Pro (High)',
@@ -61,6 +86,30 @@ const MODEL_MAP = {
   'gemini-3-flash-agent': {
     value: 1018,
     name: 'Gemini 3 Flash',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.5-flash': {
+    value: 1040,
+    name: 'Gemini 3.5 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.5-flash-medium': {
+    value: 1041,
+    name: 'Gemini 3.5 Flash (Medium)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.5-flash-low': {
+    value: 1042,
+    name: 'Gemini 3.5 Flash (Low)',
     owned_by: 'google',
     context: 1048576,
     output: 65536,
