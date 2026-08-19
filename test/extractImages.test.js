@@ -2,7 +2,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractImages } = require('../src/images');
+const { extractImages, extractMedia } = require('../src/images');
 
 // Stub context — extractImages uses ctx.outputChannel for logging file read errors
 const stubCtx = { outputChannel: null };
@@ -151,5 +151,34 @@ describe('extractImages', () => {
     assert.equal(result.length, 2);
     assert.equal(result[0].base64Data, 'aaa=');
     assert.equal(result[1].remoteUrl, 'https://example.com/b.jpg');
+  });
+});
+
+describe('extractMedia', () => {
+  it('extracts Responses input_image data URLs', () => {
+    const result = extractMedia(stubCtx, [{ type: 'input_image', image_url: 'data:image/png;base64,aaa=' }]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].mimeType, 'image/png');
+    assert.equal(result[0].base64Data, 'aaa=');
+  });
+
+  it('extracts inline input_audio data', () => {
+    const result = extractMedia(stubCtx, [{ type: 'input_audio', input_audio: { data: 'bbb=', format: 'mp3' } }]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].mimeType, 'audio/mpeg');
+    assert.equal(result[0].base64Data, 'bbb=');
+  });
+
+  it('extracts video URLs as remote media', () => {
+    const result = extractMedia(stubCtx, [{ type: 'video_url', url: 'https://example.com/movie.mp4' }]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].remoteUrl, 'https://example.com/movie.mp4');
+  });
+
+  it('extracts input_file base64 data URLs', () => {
+    const result = extractMedia(stubCtx, [{ type: 'input_file', file_data: 'data:application/pdf;base64,ccc=' }]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].mimeType, 'application/pdf');
+    assert.equal(result[0].base64Data, 'ccc=');
   });
 });

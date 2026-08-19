@@ -12,7 +12,7 @@ const {
   parseRetryAfter,
   extractProviderError,
 } = require('../utils');
-const { extractText, extractAllImages } = require('../images');
+const { extractText, extractAllMedia } = require('../images');
 const { resolveModel } = require('../models');
 const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
@@ -68,8 +68,13 @@ async function handleChatCompletions(ctx, req, res) {
 
   // ── Rate limiting: prevent feedback loops ──
   const now = Date.now();
+  // We hash the last message rather than just the last user message, because during tool execution,
+  // the client sends tool results (with role="tool") causing the last *user* message to seem identical.
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : { role: 'none', content: '' };
+  const isToolFollowup = lastMsg.role === 'tool';
+
   const timeSinceLastResponse = now - ctx.lastResponseTimestamp;
-  if (timeSinceLastResponse < ctx.MIN_REQUEST_INTERVAL_MS) {
+  if (!isToolFollowup && timeSinceLastResponse < ctx.MIN_REQUEST_INTERVAL_MS) {
     log(
       ctx,
       `🛑 Rate limited — only ${timeSinceLastResponse}ms since last response (min ${ctx.MIN_REQUEST_INTERVAL_MS}ms)`,
@@ -83,9 +88,6 @@ async function handleChatCompletions(ctx, req, res) {
   }
 
   // ── Duplicate detection: same LAST message within dedup window ──
-  // We hash the last message rather than just the last user message, because during tool execution,
-  // the client sends tool results (with role="tool") causing the last *user* message to seem identical.
-  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : { role: 'none', content: '' };
   const lastMsgText = `${lastMsg.role}:${extractText(lastMsg.content)}`;
   const msgHash = lastMsgText.substring(0, 500);
   if (msgHash === ctx.lastUserMessageHash && now - ctx.lastUserMessageTimestamp < ctx.DEDUP_WINDOW_MS) {
@@ -189,15 +191,16 @@ async function _handleChatCompletionsInner(
   workspaceUri,
   payload,
 ) {
-  // Extract images from OpenAI-format messages (base64 data URLs, remote URLs, file URIs)
-  let images = [];
+  // Extract media from OpenAI-format messages (base64 data URLs, remote URLs, file URIs).
+  // Raw GetModelResponse only accepts text, so media-bearing requests use Cascade.
+  let media = [];
   try {
-    images = await extractAllImages(ctx, messages);
-    if (images.length > 0) {
-      log(ctx, `🖼️ Extracted ${images.length} image(s) from messages`);
+    media = await extractAllMedia(ctx, messages);
+    if (media.length > 0) {
+      log(ctx, `🖼️ Extracted ${media.length} media item(s) from messages`);
     }
   } catch (e) {
-    log(ctx, `⚠️ Image extraction failed: ${e.message}`);
+    log(ctx, `⚠️ Media extraction failed: ${e.message}`);
   }
 
   const tools = payload.tools && payload.tools.length > 0 ? payload.tools : null;
@@ -218,7 +221,7 @@ async function _handleChatCompletionsInner(
 
   try {
     log(ctx, `🧠 Trying raw inference (${modelEnum})...`);
-    const raw = await callRawInference(ctx, messages, modelEnum, tools, images);
+    const raw = await callRawInference(ctx, messages, modelEnum, tools, media);
     if (raw && (raw.content || raw.toolCalls)) {
       const text = raw.content || '';
       log(ctx, `✅ Raw inference succeeded (${text.length} chars)`);

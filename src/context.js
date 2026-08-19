@@ -29,10 +29,13 @@ function createContext() {
     sidecarInfo: null,
     sidecarInfoTimestamp: 0,
     SIDECAR_CACHE_TTL: 300000, // 5 minutes (discovery is expensive on Windows)
+    rawInferenceEndpoint: null,
 
     // Concurrency guard
     chatRequestsInFlight: 0,
     MAX_CONCURRENT_REQUESTS: 3,
+    RAW_INFERENCE_START_SPACING_MS: 100,
+    CASCADE_POLL_INTERVAL_MS: 350,
 
     // Rate limiting / loop-breaking
     lastResponseTimestamp: 0,
