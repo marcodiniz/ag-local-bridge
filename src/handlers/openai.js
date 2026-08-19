@@ -11,11 +11,13 @@ const {
   buildCompletion,
   parseRetryAfter,
   extractProviderError,
+  shouldStreamViaCascade,
 } = require('../utils');
 const { extractText, extractAllMedia } = require('../images');
 const { resolveModel, VALUE_TO_MODEL_ENUM } = require('../models');
 const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
+const { callSidecarChatStream } = require('../sidecar/cascade');
 const { sanitizeRequest } = require('../sanitize');
 // ─────────────────────────────────────────────
 // POST /v1/chat/completions
@@ -203,6 +205,33 @@ async function _handleChatCompletionsInner(
 
   const tools = payload.tools && payload.tools.length > 0 ? payload.tools : null;
   const modelEnum = resolved.modelEnum || VALUE_TO_MODEL_ENUM[resolved.value];
+
+  // If streaming is requested and configured to stream via Cascade, yield delta chunks
+  if (
+    shouldStreamViaCascade(ctx, {
+      stream: isStream,
+      hasTools: !!tools,
+      hasNumericModelValue: !!resolved.value,
+    })
+  ) {
+    try {
+      log(ctx, `🌊 Streaming via Cascade trajectory delta polling (${resolved.key})...`);
+      initiateStream();
+      const stream = callSidecarChatStream(ctx, messages, resolved.value, workspaceDir, workspaceUri, media);
+      for await (const delta of stream) {
+        if (delta) {
+          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, delta))}\n\n`);
+        }
+      }
+      res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    } catch (streamErr) {
+      log(ctx, `⚠️ Cascade streaming error: ${streamErr.message}`);
+      throw streamErr;
+    }
+  }
 
   if (!modelEnum) {
     const errorMsg = `No raw model enum mapping for value ${resolved.value}. Raw inference unavailable.`;

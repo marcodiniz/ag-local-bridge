@@ -1,10 +1,12 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
-const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
+const { log, sendJson, readBody, parseRetryAfter, extractProviderError, shouldStreamViaCascade } = require('../utils');
 const { resolveModel, VALUE_TO_MODEL_ENUM } = require('../models');
 const { extractAllImages } = require('../images');
+const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
+const { callSidecarChatStream } = require('../sidecar/cascade');
 const { sanitizeRequest } = require('../sanitize');
 
 // ─────────────────────────────────────────────
@@ -235,12 +237,60 @@ async function handleAnthropicMessages(ctx, req, res) {
     }, 4500);
   }
 
+  // Resolve workspace
+  const { workspaceDir, workspaceUri } = resolveWorkspace(ctx, openAiMessages, payload, req);
+
   let images = [];
   try {
     images = await extractAllImages(ctx, openAiMessages);
     if (images.length > 0) log(ctx, `🖼️ Extracted ${images.length} image(s) from Anthropic messages`);
   } catch (e) {
     log(ctx, `⚠️ Image extraction failed: ${e.message}`);
+  }
+
+  // If streaming is requested and configured to stream via Cascade, yield delta chunks
+  if (
+    shouldStreamViaCascade(ctx, {
+      stream: isStream,
+      hasTools: !!(openAiTools && openAiTools.length > 0),
+      hasNumericModelValue: !!resolved.value,
+    })
+  ) {
+    try {
+      log(ctx, `🌊 [Anthropic] Streaming via Cascade trajectory delta polling (${resolved.key})...`);
+      initiateStream();
+
+      writeAnthropicEvent(res, 'content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
+      });
+
+      const stream = callSidecarChatStream(ctx, openAiMessages, resolved.value, workspaceDir, workspaceUri, images);
+
+      for await (const delta of stream) {
+        if (delta) {
+          writeAnthropicEvent(res, 'content_block_delta', {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: delta },
+          });
+        }
+      }
+
+      writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: 0 });
+      writeAnthropicEvent(res, 'message_delta', {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn', stop_sequence: null },
+        usage: { output_tokens: 0 },
+      });
+      writeAnthropicEvent(res, 'message_stop', { type: 'message_stop' });
+      res.end();
+      return;
+    } catch (streamErr) {
+      log(ctx, `⚠️ [Anthropic] Cascade streaming error: ${streamErr.message}`);
+      throw streamErr;
+    }
   }
 
   try {

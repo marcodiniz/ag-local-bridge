@@ -1,9 +1,11 @@
 'use strict';
 
-const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
+const { log, sendJson, readBody, parseRetryAfter, extractProviderError, shouldStreamViaCascade } = require('../utils');
 const { resolveModel, VALUE_TO_MODEL_ENUM } = require('../models');
 const { extractAllImages } = require('../images');
+const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
+const { callSidecarChatStream } = require('../sidecar/cascade');
 const { sanitizeRequest } = require('../sanitize');
 
 // ─────────────────────────────────────────────
@@ -169,12 +171,50 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
   ctx.chatRequestsInFlight++;
   log(ctx, `📡 [Gemini] Requests in flight: ${ctx.chatRequestsInFlight}`);
 
+  // Resolve workspace
+  const { workspaceDir, workspaceUri } = resolveWorkspace(ctx, openAiMessages, payload, req);
+
   let images = [];
   try {
     images = await extractAllImages(ctx, openAiMessages);
     if (images.length > 0) log(ctx, `🖼️ Extracted ${images.length} image(s) from Gemini contents`);
   } catch (e) {
     log(ctx, `⚠️ Image extraction failed: ${e.message}`);
+  }
+
+  // If streaming is requested and configured to stream via Cascade, yield delta chunks
+  if (
+    shouldStreamViaCascade(ctx, {
+      stream: isStream,
+      hasTools: !!(openAiTools && openAiTools.length > 0),
+      hasNumericModelValue: !!resolved.value,
+    })
+  ) {
+    try {
+      log(ctx, `🌊 [Gemini] Streaming via Cascade trajectory delta polling (${resolved.key})...`);
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      res.writeHead(200);
+      res.write('[\n');
+      let isFirst = true;
+
+      const stream = callSidecarChatStream(ctx, openAiMessages, resolved.value, workspaceDir, workspaceUri, images);
+
+      for await (const delta of stream) {
+        if (delta) {
+          const chunk = buildGeminiResponse(delta, null, resolved.key);
+          res.write((isFirst ? '' : ',\n') + JSON.stringify(chunk));
+          isFirst = false;
+        }
+      }
+      res.write('\n]\n');
+      res.end();
+      return;
+    } catch (streamErr) {
+      log(ctx, `⚠️ [Gemini] Cascade streaming error: ${streamErr.message}`);
+      throw streamErr;
+    }
   }
 
   try {

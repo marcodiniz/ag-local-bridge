@@ -237,10 +237,11 @@ The extension uses a 2-tier fallback strategy:
 
 ## Configuration
 
-| Setting                     | Default | Description                  |
-| --------------------------- | ------- | ---------------------------- |
-| `agLocalBridge.port`        | `11435` | HTTP server port             |
-| `agLocalBridge.logRequests` | `false` | Log request/response details |
+| Setting                       | Default   | Description                                                                                                                                                                                        |
+| ----------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agLocalBridge.port`          | `11435`   | HTTP server port                                                                                                                                                                                   |
+| `agLocalBridge.logRequests`   | `false`   | Log request/response details                                                                                                                                                                       |
+| `agLocalBridge.streamingMode` | `"smart"` | Streaming strategy: `'smart'` (low-TTFB Cascade pseudo-streaming for chat, Raw for tools), `'raw'` (strictly GetModelResponse unary inference), or `'cascade'` (forced trajectory delta streaming) |
 
 ## Requirements
 

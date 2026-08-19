@@ -4,6 +4,8 @@
 // production modules that `require('vscode')` at the top level.
 // Only stubs used by utils.js / server.js — extend as needed.
 
+let _mockConfig = {};
+
 module.exports = {
   ThemeColor: class ThemeColor {
     constructor(id) {
@@ -28,9 +30,24 @@ module.exports = {
     }),
   },
   workspace: {
-    getConfiguration: () => ({
-      get: (key, defaultValue) => defaultValue,
+    getConfiguration: (section) => ({
+      get: (key, defaultValue) => {
+        if (section && _mockConfig[section] && _mockConfig[section][key] !== undefined) {
+          return _mockConfig[section][key];
+        }
+        if (_mockConfig[key] !== undefined) {
+          return _mockConfig[key];
+        }
+        return defaultValue;
+      },
     }),
+    __setConfig: (section, key, value) => {
+      if (!_mockConfig[section]) _mockConfig[section] = {};
+      _mockConfig[section][key] = value;
+    },
+    __resetConfig: () => {
+      _mockConfig = {};
+    },
     workspaceFolders: null,
   },
   commands: {

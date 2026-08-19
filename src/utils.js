@@ -201,6 +201,32 @@ function extractProviderError(message) {
   return extracted;
 }
 
+/**
+ * Get current configured streaming mode ('smart' | 'raw' | 'cascade')
+ */
+function getStreamingMode(_ctx) {
+  const config = vscode.workspace.getConfiguration('agLocalBridge');
+  return (config && config.get('streamingMode')) || 'smart';
+}
+
+/**
+ * Decide whether a streaming request should route via Cascade trajectory delta polling
+ */
+function shouldStreamViaCascade(ctx, { stream = false, hasTools = false, hasNumericModelValue = true } = {}) {
+  if (!stream) return false;
+  if (!hasNumericModelValue) return false;
+
+  const mode = getStreamingMode(ctx);
+  if (mode === 'raw') return false;
+  if (mode === 'cascade') return true;
+
+  // 'smart' mode (default):
+  // If client defines function-calling tools, route to Raw mode for client-side tool execution
+  if (hasTools) return false;
+
+  return true;
+}
+
 module.exports = {
   log,
   verboseLog,
@@ -212,4 +238,6 @@ module.exports = {
   buildCompletion,
   parseRetryAfter,
   extractProviderError,
+  getStreamingMode,
+  shouldStreamViaCascade,
 };

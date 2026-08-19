@@ -65,6 +65,32 @@
           "type": "boolean",
           "default": false,
           "description": "Enable Verbose Logging (writes text logs to Output/ag-local-bridge.log, and formatted JSON objects to %TEMP%/ag-local-bridge-payloads.log)"
+        },
+        "agLocalBridge.streamingMode": {
+          "type": "string",
+          "enum": [
+            "smart",
+            "raw",
+            "cascade"
+          ],
+          "enumItemLabels": [
+            "Smart (Auto)",
+            "Raw (Pure LLM)",
+            "Cascade (Fast Chat)"
+          ],
+          "enumDescriptions": [
+            "Smart: Low-TTFB pseudo-streaming for chat, Raw inference for tools and swarm.",
+            "Raw: Pure LLM completions via GetModelResponse (preserves tools and full swarm pooling).",
+            "Cascade: Always streams via Cascade trajectory delta polling."
+          ],
+          "markdownEnumDescriptions": [
+            "`smart`: **(Recommended)** Automatically uses low-TTFB Cascade pseudo-streaming for pure chat, and Raw inference when client tools (`tools`) or non-streaming are used.",
+            "`raw`: Strictly uses unary `GetModelResponse` (pure prompt completions, client tools, and multi-sidecar swarm load balancing). Full response is buffered before emitting.",
+            "`cascade`: Always routes streaming requests through Cascade trajectory delta polling for instant token delivery."
+          ],
+          "default": "smart",
+          "description": "Select the streaming strategy for chat completions.",
+          "markdownDescription": "Select the streaming strategy for chat completions:\n- `smart`: Low-TTFB Cascade pseudo-streaming for pure chat + Raw inference for client tools (`tools`)\n- `raw`: Pure LLM inference via `GetModelResponse` (preserves tools and multi-account swarm pooling)\n- `cascade`: Always uses Cascade trajectory delta polling for streaming"
         }
       }
     },
