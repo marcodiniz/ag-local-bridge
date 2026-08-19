@@ -77,6 +77,7 @@ src/
     cascade.js          # Cascade (chat) RPC helpers
     proto.js            # Binary protobuf encoding (minimal descriptors)
     raw.js              # Raw LLM inference (GetModelResponse bypass)
+    swarm.js            # Multi-sidecar round-robin discovery & load balancing
 test/
   setup.js              # Global test setup (VS Code mock loader)
   __mocks__/vscode.js   # VS Code API mock
@@ -84,6 +85,7 @@ test/
 scripts/
   dev-deploy.ps1        # Local dev deployment script (Windows)
   probe-sidecar.js      # Standalone sidecar RPC probe (dev/debug)
+  start-pool.sh         # Launch/stop/status headless AG sidecar pool (Linux)
 .agents/workflows/
   dev-deploy.md         # /dev-deploy workflow instructions
 ```
@@ -141,6 +143,7 @@ linux: ['language_server_linux'];
 ### Raw Inference Mode (`src/sidecar/raw.js`)
 
 Bypasses Cascade entirely — calls `GetModelResponse` directly on the sidecar.
+When multiple sidecars are available (swarm mode), round-robins across them.
 
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
@@ -152,6 +155,33 @@ Bypasses Cascade entirely — calls `GetModelResponse` directly on the sidecar.
   `GetCascadeModelConfigData` RPC (e.g. through the bridge's own `/v1/proxy` debug endpoint)
 - **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
   `ctx.sidecarInfo` is cleared to force re-discovery on the next request (handles CSRF rotation).
+
+### Multi-Sidecar Swarm (`src/sidecar/swarm.js`)
+
+Discovery + round-robin load balancing across **multiple** AG sidecar instances.
+Designed for pooling quotas from separate Google AI Pro accounts.
+
+- Scans `ps aux` for ALL `language_server_*` processes
+- Filters out LSP-only sidecars (`--enable_lsp`)
+- Health-probes each candidate over H2 before adding to pool
+- Provides `getNextSwarmMember()` for round-robin selection
+- Cache TTL: 2 minutes (sidecars are stable once launched)
+- `raw.js` automatically activates swarm mode when >1 sidecar is found
+- On `RESOURCE_EXHAUSTED`, rotates to the next member
+
+**Usage:** Launch headless AG instances via `scripts/start-pool.sh start`
+
+```bash
+# Create isolated profiles (one-time):
+for i in 2 3 4 5; do
+  antigravity --user-data-dir ~/.ag-pool-$i   # Log in with separate Google accounts
+done
+
+# Launch the swarm:
+scripts/start-pool.sh start   # Starts pools 2-5 headless via xvfb-run
+scripts/start-pool.sh status  # Show running sidecars
+scripts/start-pool.sh stop    # Shut down all pool instances
+```
 
 ### RPC (`src/sidecar/rpc.js`)
 

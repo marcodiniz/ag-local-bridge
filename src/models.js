@@ -13,33 +13,36 @@ const MODEL_MAP = {
     context: 1048576,
     output: 65536,
   },
-  // Gemini 3.5 Flash tiers — string enums confirmed against the sidecar's
-  // GetCascadeModelConfigData RPC (it returns label ↔ enum-name pairs only,
-  // so the numeric `value`s below are bridge-internal indices, not wire values;
-  // they must stay out of the Cascade protobuf maps in sidecar/raw.js & proto.js).
   'antigravity-gemini-3.5-flash': {
-    value: 1040,
+    value: 1133,
+    name: 'Gemini 3.5 Flash',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
+  'antigravity-gemini-3.5-flash-high': {
+    value: 1133,
     name: 'Gemini 3.5 Flash (High)',
     owned_by: 'google',
     context: 1048576,
     output: 65536,
   },
   'antigravity-gemini-3.5-flash-medium': {
-    value: 1041,
+    value: 1020,
     name: 'Gemini 3.5 Flash (Medium)',
     owned_by: 'google',
     context: 1048576,
     output: 65536,
   },
   'antigravity-gemini-3.5-flash-low': {
-    value: 1042,
+    value: 1187,
     name: 'Gemini 3.5 Flash (Low)',
     owned_by: 'google',
     context: 1048576,
     output: 65536,
   },
   'antigravity-gemini-3.1-pro-high': {
-    value: 1037,
+    value: 1016,
     name: 'Gemini 3.1 Pro (High)',
     owned_by: 'google',
     context: 1048576,
@@ -92,7 +95,15 @@ const MODEL_MAP = {
     hidden: true,
   },
   'gemini-3.5-flash': {
-    value: 1040,
+    value: 1133,
+    name: 'Gemini 3.5 Flash',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.5-flash-high': {
+    value: 1133,
     name: 'Gemini 3.5 Flash (High)',
     owned_by: 'google',
     context: 1048576,
@@ -100,7 +111,7 @@ const MODEL_MAP = {
     hidden: true,
   },
   'gemini-3.5-flash-medium': {
-    value: 1041,
+    value: 1020,
     name: 'Gemini 3.5 Flash (Medium)',
     owned_by: 'google',
     context: 1048576,
@@ -108,7 +119,7 @@ const MODEL_MAP = {
     hidden: true,
   },
   'gemini-3.5-flash-low': {
-    value: 1042,
+    value: 1187,
     name: 'Gemini 3.5 Flash (Low)',
     owned_by: 'google',
     context: 1048576,
@@ -116,7 +127,7 @@ const MODEL_MAP = {
     hidden: true,
   },
   'gemini-3.1-pro-high': {
-    value: 1037,
+    value: 1016,
     name: 'Gemini 3.1 Pro (High)',
     owned_by: 'google',
     context: 1048576,

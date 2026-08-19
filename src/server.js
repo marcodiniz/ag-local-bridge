@@ -5,6 +5,7 @@ const http = require('http');
 const { log, sendJson, updateStatusBar } = require('./utils');
 const { handleModels } = require('./handlers/models');
 const { handleChatCompletions } = require('./handlers/openai');
+const { handleResponses } = require('./handlers/responses');
 const { handleAnthropicMessages, handleCountTokens } = require('./handlers/anthropic');
 const { handleGeminiGenerateContent, parseGeminiPath } = require('./handlers/gemini');
 const { handleProxy } = require('./handlers/proxy');
@@ -145,6 +146,9 @@ async function handleRequest(ctx, req, res) {
   }
   if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
     return handleChatCompletions(ctx, req, res);
+  }
+  if (req.method === 'POST' && (url.pathname === '/v1/responses' || url.pathname === '/responses')) {
+    return handleResponses(ctx, req, res);
   }
 
   // ── Anthropic-compatible endpoints ──

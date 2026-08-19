@@ -3,16 +3,20 @@
 const { log, verboseLog } = require('../utils');
 const { extractText } = require('../images');
 const { discoverSidecar } = require('./discovery');
-const { makeH2JsonCall } = require('./rpc');
+const { makeH2JsonCall, clearH2Clients } = require('./rpc');
 const { callSidecarChat } = require('./cascade');
+const { discoverSwarm, getNextSwarmMember, invalidateSwarmCache, markSwarmMemberExhausted } = require('./swarm');
 
 // Map raw-inference string enum → sidecar numeric model value
 const MODEL_ENUM_TO_VALUE = {
   MODEL_PLACEHOLDER_M18: 1018,
-  MODEL_PLACEHOLDER_M16: 1037,
+  MODEL_PLACEHOLDER_M16: 1016, // Corregido: Pro High
   MODEL_PLACEHOLDER_M36: 1036,
   MODEL_PLACEHOLDER_M35: 1035,
   MODEL_PLACEHOLDER_M26: 1026,
+  MODEL_PLACEHOLDER_M20: 1020, // Nuevo: Gemini 3.5 Medium
+  MODEL_PLACEHOLDER_M133: 1133, // Nuevo: Gemini 3.5 High
+  MODEL_PLACEHOLDER_M187: 1187, // Nuevo: Gemini 3.5 Low
   MODEL_OPENAI_GPT_OSS_120B_MEDIUM: 342,
 };
 
@@ -196,28 +200,71 @@ function parseToolCalls(responseText) {
   };
 }
 
-let inferenceQueue = Promise.resolve();
+const swarmQueues = new Map();
+let inferenceStartMutex = Promise.resolve();
 
 /**
- * Serialize GetModelResponse calls: only ONE runs at a time, with a 2-second
- * cooldown between consecutive calls. This prevents the sidecar from returning
- * RESOURCE_EXHAUSTED when multiple clients fire parallel requests.
+ * Serialize GetModelResponse calls per sidecar PID: only ONE runs at a time per sidecar,
+ * with a 2-second cooldown between consecutive calls. This prevents the sidecar
+ * from returning RESOURCE_EXHAUSTED under parallel request spikes, while still
+ * allowing concurrent execution across different sidecars in swarm mode.
  */
-function enqueueInference(fn) {
+function enqueueInferenceForMember(pid, fn) {
+  let queue = swarmQueues.get(pid);
+  if (!queue) {
+    queue = Promise.resolve();
+  }
+
   let resolve, reject;
   const resultPromise = new Promise((res, rej) => {
     resolve = res;
     reject = rej;
   });
-  inferenceQueue = inferenceQueue.then(async () => {
-    try {
-      resolve(await fn());
-    } catch (err) {
-      reject(err);
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  });
+
+  const nextQueue = queue
+    .then(async () => {
+      try {
+        const res = await fn();
+        resolve(res);
+      } catch (err) {
+        reject(err);
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    })
+    .catch(() => {});
+
+  swarmQueues.set(pid, nextQueue);
   return resultPromise;
+}
+
+function getRawEndpointKey(info, csrf) {
+  return `${info.pid}:${csrf}:${(info.actualPorts || []).join(',')}`;
+}
+
+function getCandidatePorts(info) {
+  return [
+    ...new Set([...(info.actualPorts || []).filter((p) => p !== info.extensionServerPort), info.extensionServerPort]),
+  ];
+}
+
+async function callGetModelResponseOnPort(ctx, info, csrf, port, prompt, modelEnum, timeoutMs) {
+  return makeH2JsonCall(
+    port,
+    csrf,
+    info.certPath,
+    'GetModelResponse',
+    {
+      prompt,
+      model: modelEnum,
+    },
+    1,
+    timeoutMs,
+  );
+}
+
+function clearRawEndpoint(ctx) {
+  ctx.rawInferenceEndpoint = null;
+  clearH2Clients();
 }
 
 /**
@@ -244,36 +291,23 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
     return { content: text, toolCalls: null };
   }
 
-  const info = await discoverSidecar(ctx);
-  if (!info) throw new Error('Sidecar not discovered');
+  // ── Swarm-aware discovery ──────────────────────────────────────────────
+  // Try to discover all sidecars (multi-account pool). If the swarm has
+  // multiple members, round-robin across them. Falls back to single-sidecar
+  // discovery if swarm discovery finds nothing.
+  const swarmMembers = await discoverSwarm(ctx);
+  const useSwarm = swarmMembers.length > 1;
 
-  if (!info.csrfTokens || info.csrfTokens.length === 0) {
+  if (useSwarm) {
+    log(ctx, `🐝 Swarm mode: ${swarmMembers.length} sidecars available — using round-robin`);
+  }
+
+  // Single-sidecar fallback: use the original discovery path
+  const info = useSwarm ? null : await discoverSidecar(ctx);
+  if (!useSwarm && !info) throw new Error('Sidecar not discovered');
+
+  if (!useSwarm && (!info.csrfTokens || info.csrfTokens.length === 0)) {
     throw new Error('Sidecar discovered but no CSRF tokens available');
-  }
-  const mainCsrf = info.csrfTokens[0];
-
-  // Find a working LS port — try non-extension ports first, then extension port as fallback.
-  // The LS ports may have died while the extension port stays alive; trying all ports
-  // avoids 'No reachable LS port' when the sidecar recycles its gRPC listeners.
-  const lsPorts = [
-    ...info.actualPorts.filter((p) => p !== info.extensionServerPort),
-    info.extensionServerPort, // last resort — extension port may also serve LS gRPC
-  ];
-  let lsPort = null;
-  for (const port of lsPorts) {
-    try {
-      await makeH2JsonCall(port, mainCsrf, info.certPath, 'GetStatus', {});
-      lsPort = port;
-      break;
-    } catch {
-      // try next port
-    }
-  }
-  if (!lsPort) {
-    // Invalidate sidecar cache so next request re-discovers fresh ports
-    ctx.sidecarInfo = null;
-    ctx.sidecarInfoTimestamp = 0;
-    throw new Error('No reachable LS port');
   }
 
   // Format the prompt
@@ -282,30 +316,223 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
   log(ctx, `🧠 Raw inference: ${prompt.length} chars, model=${modelEnum}, tools=${tools ? tools.length : 0}`);
 
   // Call GetModelResponse with an extended timeout.
-  // Large prompts or slow thinking models can take several minutes.
   const INFERENCE_TIMEOUT_MS = 900000; // 15 minutes
 
-  const reqBody = {
-    prompt,
-    model: modelEnum,
-  };
+  // ── Swarm round-robin path ────────────────────────────────────────────
+  if (useSwarm) {
+    return _callRawInferenceSwarm(ctx, swarmMembers, prompt, modelEnum, tools, INFERENCE_TIMEOUT_MS);
+  }
 
-  // Retry loop for transient RESOURCE_EXHAUSTED / model-not-found errors.
-  // enqueueInference serializes all calls: only 1 GetModelResponse at a time,
-  // with a 2-second cooldown between consecutive calls.
+  // ── Single-sidecar path (original logic) ──────────────────────────────
+  return _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, INFERENCE_TIMEOUT_MS);
+}
+
+/**
+ * Swarm round-robin inference: try each member in turn until one succeeds.
+ * On RESOURCE_EXHAUSTED, automatically rotate to the next member.
+ */
+async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, timeoutMs) {
+  const totalMembers = members.length;
+  let lastError = null;
+
+  // Try every member in the swarm (starting from the round-robin position)
+  for (let i = 0; i < totalMembers; i++) {
+    const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum] || 1035;
+    const member = getNextSwarmMember(members, numericModelValue);
+
+    if (member === 'ALL_EXHAUSTED') {
+      log(ctx, `⚠️ 🐝 All swarm members exhausted for model enum ${numericModelValue}.`);
+      return {
+        content: `⚠️ **Rate Limit Exceeded**: All ${members.length} available Antigravity accounts are currently out of quota for this model tier. Please wait a while or switch to a different model tier (e.g. Gemini 3 Flash).`,
+        toolCalls: null,
+      };
+    }
+
+    if (!member) continue;
+
+    try {
+      // Stagger concurrent inference starts with rejection guard
+      await new Promise((resolve) => {
+        inferenceStartMutex = inferenceStartMutex
+          .then(() => {
+            resolve();
+          })
+          .catch(() => {
+            resolve();
+          })
+          .then(() => new Promise((r) => setTimeout(r, ctx.RAW_INFERENCE_START_SPACING_MS || 100)));
+      });
+
+      log(ctx, `🐝 Trying sidecar PID=${member.pid} port=${member.port} (${i + 1}/${totalMembers})`);
+
+      const result = await enqueueInferenceForMember(member.pid, () =>
+        makeH2JsonCall(
+          member.port,
+          member.csrf,
+          member.certPath,
+          'GetModelResponse',
+          { prompt, model: modelEnum },
+          1,
+          timeoutMs,
+        ),
+      );
+
+      const responseText = (result && result.response) || '';
+      verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
+      log(ctx, `🧠 Raw response: ${responseText.length} chars (from PID=${member.pid})`);
+
+      // Check for quota exhaustion — flag specific bucket and rotate
+      if (
+        responseText.includes('RESOURCE_EXHAUSTED') ||
+        responseText.includes("Method doesn't allow unregistered callers")
+      ) {
+        log(ctx, `⚠️ 🐝 Sidecar PID=${member.pid} quota exhausted — flagging for 1 hour & rotating...`);
+        markSwarmMemberExhausted(member.pid, MODEL_ENUM_TO_VALUE[modelEnum] || 1035);
+        lastError = new Error(`Upstream API failed: ${responseText.substring(0, 200)}`);
+        continue;
+      }
+
+      if (responseText.trim().length === 0) {
+        return {
+          content:
+            '⚠️ **Inference Blocked**: The model returned an empty response. This usually occurs when the prompt triggers a Google API safety filter (e.g. sensitive code, PII, or security flags) or encounters a silent internal error. Please modify your prompt and try again.',
+          toolCalls: null,
+        };
+      }
+
+      // Auth failure — skip this sidecar
+      const isAuthError =
+        responseText.length < 500 &&
+        (responseText.includes('PERMISSION_DENIED') ||
+          responseText.includes('Verify your account') ||
+          responseText.includes('403 Forbidden') ||
+          /^(?:HTTP )?401\b/i.test(responseText.trim()));
+
+      if (isAuthError) {
+        log(ctx, `⚠️ 🐝 Auth failure on PID=${member.pid} — rotating...`);
+        lastError = new Error(`Auth failure: ${responseText.substring(0, 200)}`);
+        continue;
+      }
+
+      // Success!
+      if (tools && tools.length > 0) {
+        return parseToolCalls(responseText);
+      }
+      return { content: responseText, toolCalls: null };
+    } catch (err) {
+      const errMsg = err.message || '';
+      log(ctx, `⚠️ 🐝 Sidecar PID=${member.pid} failed: ${errMsg.substring(0, 100)} — rotating...`);
+      lastError = err;
+
+      // Connection-level errors: keep trying next member
+      const isConnectionError =
+        errMsg.includes('H2 connect') ||
+        errMsg.includes('H2 timeout') ||
+        errMsg.includes('socket hang up') ||
+        errMsg.includes('ECONNRESET') ||
+        errMsg.includes('canceled') ||
+        errMsg.includes('SSL') ||
+        errMsg.includes('EPIPE');
+
+      if (isConnectionError) continue;
+
+      // RESOURCE_EXHAUSTED in the error message (thrown by our own code above)
+      if (errMsg.includes('RESOURCE_EXHAUSTED')) continue;
+
+      // Unknown error — don't keep rotating, throw immediately
+      throw err;
+    }
+  }
+
+  // All members exhausted
+  invalidateSwarmCache();
+  throw lastError || new Error('All swarm members exhausted');
+}
+
+/**
+ * Original single-sidecar inference path (unchanged from before).
+ */
+async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, timeoutMs) {
   const MAX_RETRIES = 2;
   const RETRY_DELAY_MS = 5000;
+  const triedAccountEmails = new Set();
+
+  try {
+    const vscode = require('vscode');
+    const activeAccount = await vscode.commands.executeCommand('ag.getActiveAccount');
+    if (activeAccount && activeAccount.email) {
+      triedAccountEmails.add(activeAccount.email);
+    }
+  } catch (e) {
+    // Switchboard not active or initialized
+  }
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const mainCsrf = info.csrfTokens ? info.csrfTokens[0] : null;
+    if (!mainCsrf) {
+      throw new Error('Sidecar discovered but no CSRF tokens available');
+    }
+    const endpointKey = getRawEndpointKey(info, mainCsrf);
+    const candidatePorts = getCandidatePorts(info);
+
     if (attempt > 0) {
       log(ctx, `⏳ Retry ${attempt}/${MAX_RETRIES} after ${RETRY_DELAY_MS / 1000}s backoff...`);
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     }
 
     try {
-      const result = await enqueueInference(() =>
-        makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetModelResponse', reqBody, 1, INFERENCE_TIMEOUT_MS),
-      );
+      // Slightly stagger concurrent inference requests with rejection guard
+      await new Promise((resolve) => {
+        inferenceStartMutex = inferenceStartMutex
+          .then(() => {
+            resolve();
+          })
+          .catch(() => {
+            resolve();
+          })
+          .then(() => new Promise((r) => setTimeout(r, ctx.RAW_INFERENCE_START_SPACING_MS || 100)));
+      });
+
+      const cached = ctx.rawInferenceEndpoint;
+      const portsToTry =
+        cached && cached.key === endpointKey
+          ? [cached.port, ...candidatePorts.filter((p) => p !== cached.port)]
+          : candidatePorts;
+
+      let result;
+      let lastError = null;
+      for (const port of portsToTry) {
+        try {
+          result = await enqueueInferenceForMember(info.pid, () =>
+            callGetModelResponseOnPort(ctx, info, mainCsrf, port, prompt, modelEnum, timeoutMs),
+          );
+          ctx.rawInferenceEndpoint = { key: endpointKey, port, lastUsed: Date.now() };
+          break;
+        } catch (err) {
+          lastError = err;
+          if (cached && cached.port === port) clearRawEndpoint(ctx);
+          const msg = String(err && err.message ? err.message : err);
+          const shouldFailover =
+            msg.includes('H2 connect') ||
+            msg.includes('H2 timeout') ||
+            msg.includes('WRONG_VERSION_NUMBER') ||
+            msg.includes('SSL routines') ||
+            msg.includes('disconnected') ||
+            msg.includes('EPIPE') ||
+            msg.includes('socket hang up') ||
+            msg.includes('ECONNRESET') ||
+            msg.includes('HTTP 500') ||
+            msg.includes('internal error');
+          if (!shouldFailover) break;
+        }
+      }
+
+      if (!result) {
+        ctx.sidecarInfo = null;
+        ctx.sidecarInfoTimestamp = 0;
+        clearRawEndpoint(ctx);
+        throw lastError || new Error('No reachable raw inference port');
+      }
 
       const responseText = (result && result.response) || '';
       verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
@@ -330,7 +557,6 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
         };
       }
 
-      // Auth failure — invalidate sidecar cache so next request triggers re-discovery.
       const isAuthError =
         responseText.length < 500 &&
         (responseText.includes('PERMISSION_DENIED') ||
@@ -345,13 +571,90 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
         throw new Error(`Auth failure (sidecar cache cleared): ${responseText.substring(0, 200)}`);
       }
 
-      // Success — parse tool calls if applicable and return
       if (tools && tools.length > 0) {
         return parseToolCalls(responseText);
       }
       return { content: responseText, toolCalls: null };
     } catch (err) {
       const errMsg = err.message || '';
+      const isRateLimitOrAuth =
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes("Method doesn't allow unregistered callers") ||
+        errMsg.includes('Auth failure') ||
+        errMsg.includes('PERMISSION_DENIED') ||
+        errMsg.includes('Forbidden') ||
+        errMsg.includes('401') ||
+        errMsg.includes('403') ||
+        errMsg.includes('WRONG_VERSION_NUMBER') ||
+        errMsg.includes('SSL routines') ||
+        errMsg.includes('Upstream model provider error') ||
+        errMsg.includes('pending stream has been canceled');
+
+      if (isRateLimitOrAuth) {
+        let accounts = [];
+        let activeAccount = null;
+        try {
+          const vscode = require('vscode');
+          accounts = (await vscode.commands.executeCommand('ag.getAccounts')) || [];
+          activeAccount = await vscode.commands.executeCommand('ag.getActiveAccount');
+        } catch (e) {
+          log(ctx, `⚠️ Switchboard commands not available: ${e.message}`);
+        }
+
+        if (accounts.length > 1) {
+          const currentIndex = activeAccount
+            ? accounts.findIndex((a) => a.id === activeAccount.id || a.email === activeAccount.email)
+            : 0;
+
+          let nextAccount = null;
+          for (let offset = 1; offset <= accounts.length; offset++) {
+            const idx = (currentIndex + offset) % accounts.length;
+            const candidate = accounts[idx];
+            if (candidate && candidate.email && !triedAccountEmails.has(candidate.email)) {
+              nextAccount = candidate;
+              break;
+            }
+          }
+
+          if (nextAccount) {
+            log(
+              ctx,
+              `🔄 Rate limit/Auth issue encountered (${errMsg.substring(0, 100)}). Rotating silently to next account: ${nextAccount.email}`,
+            );
+            try {
+              const vscode = require('vscode');
+              const success = await vscode.commands.executeCommand('ag.switchAccount', nextAccount.id, true);
+              if (success) {
+                triedAccountEmails.add(nextAccount.email);
+                log(ctx, `⏳ Waiting 2 seconds for account switch to propagate to sidecar...`);
+                await new Promise((r) => setTimeout(r, 2000));
+
+                // Clear discovery cache to force re-discovery
+                ctx.sidecarInfo = null;
+                ctx.sidecarInfoTimestamp = 0;
+                clearRawEndpoint(ctx);
+
+                // Re-discover sidecar for the new account!
+                const freshInfo = await discoverSidecar(ctx);
+                if (freshInfo && freshInfo.csrfTokens && freshInfo.csrfTokens.length > 0) {
+                  info = freshInfo;
+                }
+
+                // Reset attempt counter so we get full retries on the new account
+                attempt = 0;
+                continue;
+              } else {
+                log(ctx, `❌ Failed to switch to account: ${nextAccount.email}`);
+              }
+            } catch (switchErr) {
+              log(ctx, `❌ Error calling switchAccount: ${switchErr.message}`);
+            }
+          } else {
+            log(ctx, `❌ All tracked accounts (${accounts.length}) have been exhausted.`);
+          }
+        }
+      }
+
       const isRetryable =
         errMsg.includes('RESOURCE_EXHAUSTED') ||
         errMsg.includes('model not found') ||

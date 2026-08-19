@@ -46,7 +46,7 @@ async function callSidecarChat(
   const info = await discoverSidecar(ctx);
   if (!info) throw new Error('Sidecar not discovered');
 
-  let userMessage = messages
+  const userMessage = messages
     .filter((m) => m.role === 'user')
     .map((m) => extractText(m.content))
     .join('\n');
@@ -69,6 +69,7 @@ async function callSidecarChat(
 
   const convKey = getConversationKey(messages, workspaceDir);
   let cascadeId = null;
+  let lastUpstreamError = null;
 
   // Retry loop: start fresh cascade on each attempt (capacity errors leave error steps)
   const MAX_RETRIES = 3;
@@ -205,7 +206,9 @@ async function callSidecarChat(
     const maxWait = 300000; // Wait up to 5 minutes, thinking models can be very slow
     let shouldRetry = false;
     while (Date.now() - pollStart < maxWait) {
-      await new Promise((r) => setTimeout(r, 1500));
+      const elapsedMs = Date.now() - pollStart;
+      const pollDelay = elapsedMs < 10000 ? ctx.CASCADE_POLL_INTERVAL_MS || 350 : 1000;
+      await new Promise((r) => setTimeout(r, pollDelay));
       const elapsed = Math.round((Date.now() - pollStart) / 1000);
       try {
         const traj = await makeH2JsonCall(lsPort, mainCsrf, info.certPath, 'GetCascadeTrajectory', { cascadeId });
@@ -220,24 +223,38 @@ async function callSidecarChat(
             const pr = step.plannerResponse;
             if (!pr) continue;
             const text = pr.modifiedResponse || pr.response || pr.content || pr.thinking;
-            if (text && text.trim().length >= 3) {
+            if (text && text.trim().length >= 1) {
+              // Corregido: >= 1 para permitir respuestas cortas válidas como "OK"
               log(ctx, `✅ Response ready (${text.length} chars, attempt ${attempt + 1})`);
               return text.trim();
             }
           }
-          // Check for capacity error → fail fast, don't retry (each retry burns more quota)
-          if (
-            steps.some(
-              (s) =>
-                s.type === 'CORTEX_STEP_TYPE_ERROR_MESSAGE' &&
-                JSON.stringify(s.errorMessage || '')
-                  .toLowerCase()
-                  .includes('capacity'),
-            )
-          ) {
+          // Check for capacity or other upstream errors
+          let hasCapacityError = false;
+          let upstreamError = null;
+          for (const s of steps) {
+            if (s.type === 'CORTEX_STEP_TYPE_ERROR_MESSAGE') {
+              const msg = s.errorMessage ? s.errorMessage.message || JSON.stringify(s.errorMessage) : '';
+              if (msg.toLowerCase().includes('capacity')) {
+                hasCapacityError = true;
+              }
+              upstreamError = msg;
+            }
+          }
+
+          if (hasCapacityError) {
             log(ctx, `  🛑 Capacity error (attempt ${attempt + 1}), failing fast (no retry to preserve quota)`);
             ctx.activeCascades.delete(convKey);
-            shouldRetry = false; // Don't retry — model is capacity-exhausted, retrying just wastes quota
+            shouldRetry = false;
+          } else if (upstreamError) {
+            log(ctx, `  🛑 Upstream error: ${upstreamError}`);
+            ctx.activeCascades.delete(convKey);
+            lastUpstreamError = upstreamError;
+            verboseLog(
+              ctx,
+              `GetCascadeTrajectory full trajectory on upstream failure: ${JSON.stringify(traj, null, 2)}`,
+            );
+            shouldRetry = false;
           } else {
             log(ctx, `  ⚠️ IDLE with no PLANNER_RESPONSE after ${elapsed}s`);
             ctx.activeCascades.delete(convKey);
@@ -250,6 +267,9 @@ async function callSidecarChat(
       }
     }
     if (!shouldRetry) break;
+  }
+  if (lastUpstreamError) {
+    throw new Error(`Cascade failed: Cascade upstream error: ${lastUpstreamError}`);
   }
   throw new Error(`Cascade failed after ${MAX_RETRIES} attempts (model capacity exhausted)`);
 }

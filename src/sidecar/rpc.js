@@ -5,6 +5,71 @@ const https = require('https');
 const http2 = require('http2');
 const fs = require('fs');
 
+const caCache = new Map();
+
+function getCachedCa(certPath) {
+  if (!certPath) return undefined;
+  if (caCache.has(certPath)) return caCache.get(certPath);
+  try {
+    const ca = fs.readFileSync(certPath);
+    caCache.set(certPath, ca);
+    return ca;
+  } catch {
+    caCache.set(certPath, undefined);
+    return undefined;
+  }
+}
+
+const h2Clients = new Map();
+
+function getH2Client(port, csrf, certPath) {
+  const key = `${port}:${csrf}:${certPath || ''}`;
+  if (h2Clients.has(key)) {
+    const client = h2Clients.get(key);
+    if (!client.closed && !client.destroyed) {
+      return client;
+    }
+    h2Clients.delete(key);
+  }
+
+  const client = http2.connect(`https://localhost:${port}`, {
+    ca: getCachedCa(certPath),
+    rejectUnauthorized: false,
+  });
+
+  client.on('error', () => {
+    h2Clients.delete(key);
+    try {
+      client.close();
+    } catch {}
+  });
+
+  client.on('close', () => {
+    h2Clients.delete(key);
+  });
+
+  client.on('goaway', () => {
+    h2Clients.delete(key);
+    try {
+      client.close();
+    } catch {}
+  });
+
+  h2Clients.set(key, client);
+  return client;
+}
+
+function clearH2Clients() {
+  for (const [key, client] of h2Clients.entries()) {
+    try {
+      if (!client.closed && !client.destroyed) {
+        client.close();
+      }
+    } catch {}
+    h2Clients.delete(key);
+  }
+}
+
 // ─────────────────────────────────────────────
 // ConnectRPC communication with the sidecar
 // ─────────────────────────────────────────────
@@ -17,60 +82,73 @@ const fs = require('fs');
  */
 function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
-    let ca;
+    let client;
     try {
-      ca = certPath ? fs.readFileSync(certPath) : undefined;
-    } catch {
-      /* ignore */
+      client = getH2Client(port, csrf, certPath);
+    } catch (err) {
+      return reject(new Error('H2 connect: ' + err.message));
     }
-    const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
-    const chunks = [];
+
+    let req;
     let status;
+    const chunks = [];
     let settled = false;
+    let timer = null;
+
     const settle = (fn, val) => {
       if (!settled) {
         settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
         fn(val);
       }
     };
-    client.on('error', (err) => {
-      settle(reject, new Error('H2 connect: ' + err.message));
-    });
-    client.on('connect', () => {
-      const req = client.request({
+
+    try {
+      req = client.request({
         ':method': 'POST',
         ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
         'content-type': contentType,
         'connect-protocol-version': '1',
         'x-codeium-csrf-token': csrf,
       });
-      req.on('response', (h) => {
-        status = h[':status'];
-      });
-      req.on('data', (d) => {
-        chunks.push(d);
-      });
-      req.on('end', () => {
-        client.close();
-        const body = Buffer.concat(chunks);
-        if (status === 200) {
-          settle(resolve, body);
-        } else {
-          settle(reject, new Error(`HTTP ${status}: ${body.toString('utf8').substring(0, 1000)}`));
-        }
-      });
-      req.on('error', (e) => {
-        client.close();
-        settle(reject, e);
-      });
-      req.write(payload);
-      req.end();
+    } catch (err) {
+      return settle(reject, new Error('H2 connect: ' + err.message));
+    }
+
+    req.on('response', (h) => {
+      status = h[':status'];
     });
-    setTimeout(() => {
-      try {
-        client.close();
-      } catch {}
-      settle(reject, new Error('H2 timeout'));
+
+    req.on('data', (d) => {
+      chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(String(d)));
+    });
+
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (status === 200) {
+        settle(resolve, body);
+      } else {
+        settle(reject, new Error(`HTTP ${status}: ${body.toString('utf8').substring(0, 1000)}`));
+      }
+    });
+
+    req.on('error', (e) => {
+      settle(reject, e);
+    });
+
+    req.write(payload);
+    req.end();
+
+    timer = setTimeout(() => {
+      if (!settled) {
+        try {
+          req.close(http2.constants.NGHTTP2_CANCEL);
+        } catch {}
+        settle(reject, new Error('H2 timeout'));
+      }
     }, timeoutMs);
   });
 }
@@ -83,64 +161,59 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
  */
 function _makeH2StreamingCallOnce(port, csrf, certPath, method, contentType, payload) {
   return new Promise((resolve, reject) => {
-    let ca;
+    let client;
     try {
-      ca = certPath ? fs.readFileSync(certPath) : undefined;
-    } catch {
-      /* ignore */
+      client = getH2Client(port, csrf, certPath);
+    } catch (err) {
+      return reject(new Error('H2 connect: ' + err.message));
     }
-    const client = http2.connect(`https://localhost:${port}`, { ca, rejectUnauthorized: false });
+
+    let req;
     let status;
     const chunks = [];
 
     const timer = setTimeout(() => {
-      try {
-        client.close();
-      } catch {}
       resolve(); // streaming RPC — timeout is normal, means server started streaming
     }, 30000);
 
-    client.on('error', (err) => {
-      clearTimeout(timer);
-      reject(new Error('H2 connect: ' + err.message));
-    });
-
-    client.on('connect', () => {
-      const req = client.request({
+    try {
+      req = client.request({
         ':method': 'POST',
         ':path': `/exa.language_server_pb.LanguageServerService/${method}`,
         'content-type': contentType,
         'connect-protocol-version': '1',
         'x-codeium-csrf-token': csrf,
       });
-      req.on('response', (h) => {
-        status = h[':status'];
-      });
-      req.on('data', (d) => {
-        chunks.push(d);
-      });
-      req.on('end', () => {
-        clearTimeout(timer);
-        try {
-          client.close();
-        } catch {}
-        if (status === 200) resolve();
-        else {
-          const body = Buffer.concat(chunks).toString('utf8');
-          reject(new Error(`HTTP ${status}: ${body.substring(0, 1000)}`));
-        }
-      });
-      req.on('error', (e) => {
-        clearTimeout(timer);
-        try {
-          client.close();
-        } catch {}
-        if (status === 200 || chunks.length > 0) resolve();
-        else reject(e);
-      });
-      req.write(payload);
-      req.end();
+    } catch (err) {
+      clearTimeout(timer);
+      return reject(new Error('H2 connect: ' + err.message));
+    }
+
+    req.on('response', (h) => {
+      status = h[':status'];
     });
+
+    req.on('data', (d) => {
+      chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(String(d)));
+    });
+
+    req.on('end', () => {
+      clearTimeout(timer);
+      if (status === 200) resolve();
+      else {
+        const body = Buffer.concat(chunks).toString('utf8');
+        reject(new Error(`HTTP ${status}: ${body.substring(0, 1000)}`));
+      }
+    });
+
+    req.on('error', (e) => {
+      clearTimeout(timer);
+      if (status === 200 || chunks.length > 0) resolve();
+      else reject(e);
+    });
+
+    req.write(payload);
+    req.end();
   });
 }
 
@@ -150,11 +223,21 @@ async function _withRetry(fn, retries = 2, retryOnTimeout = true) {
     try {
       return await fn();
     } catch (e) {
-      const isTimeout = e.message.includes('H2 timeout');
-      const isConnect = e.message.includes('H2 connect:');
+      const msg = e.message || '';
+      const isTimeout = msg.includes('H2 timeout');
+      const isTransient =
+        msg.includes('H2 connect:') ||
+        msg.includes('socket hang up') ||
+        msg.includes('ECONNRESET') ||
+        msg.includes('EPIPE') ||
+        msg.includes('Client session is closed') ||
+        msg.includes('stream closed') ||
+        msg.includes('Stream closed') ||
+        msg.includes('cancel');
+
       // Don't retry on timeout if caller set a custom (long) timeout — the request legitimately failed
-      if (attempt < retries && (isConnect || (isTimeout && retryOnTimeout))) {
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      if (attempt < retries && (isTransient || (isTimeout && retryOnTimeout))) {
+        await new Promise((r) => setTimeout(r, 200 * (attempt + 1))); // faster retry spacing
         continue;
       }
       throw e;
@@ -306,4 +389,5 @@ module.exports = {
   makeH2ProtoCall,
   makeH2ProtoStreamingCall,
   makeConnectRpcCallOnPort,
+  clearH2Clients,
 };

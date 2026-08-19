@@ -5,13 +5,25 @@ const { log, sendJson } = require('../utils');
 const { MODEL_MAP, DEFAULT_MODEL_KEY } = require('../models');
 const { discoverSidecar } = require('../sidecar/discovery');
 const { makeH2JsonCall, makeConnectRpcCallOnPort } = require('../sidecar/rpc');
+const { getSwarmCooldowns } = require('../sidecar/swarm');
 
 // ─────────────────────────────────────────────
 // Debug & Diagnostics
 // ─────────────────────────────────────────────
 
 async function handleDebug(ctx, req, res) {
-  const result = { sidecar: {}, interceptedAuth: {}, lm: {}, chatAPI: {} };
+  const result = { sidecar: {}, interceptedAuth: {}, lm: {}, chatAPI: {}, commands: [] };
+
+  const url = new URL(req.url, 'http://localhost');
+  const switchId = url.searchParams.get('switch');
+  if (switchId) {
+    try {
+      const success = await vscode.commands.executeCommand('ag.switchAccount', switchId, true);
+      result.switchResult = { success, target: switchId };
+    } catch (e) {
+      result.switchResult = { error: e.message };
+    }
+  }
 
   // Intercepted CSRF
   result.interceptedAuth = {
@@ -28,9 +40,48 @@ async function handleDebug(ctx, req, res) {
     uptimeSec: Math.round((Date.now() - (ctx.lastResponseTimestamp || Date.now())) / 1000), // approximate
   };
 
+  // Commands
+  try {
+    const all = await vscode.commands.getCommands(true);
+    result.commands = all.filter(
+      (c) =>
+        c.toLowerCase().includes('antigravity') ||
+        c.toLowerCase().includes('jetski') ||
+        c.toLowerCase().includes('cascade') ||
+        c.startsWith('ag.'),
+    );
+  } catch (e) {
+    result.commands = { error: e.message };
+  }
+
+  // Switchboard status
+  result.switchboard = { accounts: [], active: null };
+  try {
+    const rawAccounts = await vscode.commands.executeCommand('ag.getAccounts');
+    result.switchboard.accounts = (rawAccounts || []).map((acc) => ({
+      id: acc.id,
+      email: acc.email,
+      name: acc.name,
+      isActive: acc.isActive,
+    }));
+  } catch (e) {
+    result.switchboard.accountsError = e.message;
+  }
+  try {
+    const rawActive = await vscode.commands.executeCommand('ag.getActiveAccount');
+    result.switchboard.active = rawActive ? { id: rawActive.id, email: rawActive.email, name: rawActive.name } : null;
+  } catch (e) {
+    result.switchboard.activeError = e.message;
+  }
+
   // Sidecar
   const info = await discoverSidecar(ctx);
   result.sidecar = info || { error: 'Not found' };
+
+  // Swarm Status
+  result.swarm = {
+    cooldowns: getSwarmCooldowns(),
+  };
 
   // LM
   try {
@@ -200,6 +251,17 @@ async function showStatus(ctx) {
   log(ctx, '─── AG Local Bridge Status ───');
   log(ctx, `  Server: ${ctx.server ? `✅ http://localhost:${port}` : '❌ Stopped'}`);
   log(ctx, `  Sidecar: ${info ? `✅ port ${info.extensionServerPort}` : '❌ Not found'}`);
+
+  const cooldowns = getSwarmCooldowns();
+  const cooldownPids = Object.keys(cooldowns);
+  if (cooldownPids.length > 0) {
+    log(ctx, `  Swarm Quota Exhaustion Cooldowns:`);
+    for (const pid of cooldownPids) {
+      log(ctx, `    PID ${pid}: ${JSON.stringify(cooldowns[pid])}`);
+    }
+  } else {
+    log(ctx, `  Swarm Quotas: All healthy`);
+  }
 }
 
 module.exports = { handleDebug, probeSidecar, diagnoseModels, diagnoseCommands, showStatus };
