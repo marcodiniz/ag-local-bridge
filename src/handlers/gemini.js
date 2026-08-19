@@ -133,6 +133,15 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
 
   // Resolve model — modelFromPath comes from the URL like "gemini-3.1-pro-high"
   const resolved = resolveModel(modelFromPath || payload.model);
+  if (!resolved) {
+    return sendJson(res, 404, {
+      error: {
+        code: 404,
+        message: `Unknown model '${modelFromPath || payload.model}'. Use GET /v1/models for available ids.`,
+        status: 'NOT_FOUND',
+      },
+    });
+  }
   log(ctx, `📡 [Gemini] Model: ${resolved.key} (enum=${resolved.value})`);
 
   const modelEnum = VALUE_TO_MODEL_ENUM[resolved.value];

@@ -280,7 +280,12 @@ function clearRawEndpoint(ctx) {
 async function callRawInference(ctx, messages, modelEnum, tools = null, images = []) {
   if (images && images.length > 0) {
     log(ctx, `🖼️ Images detected! Raw inference does not support vision. Routing to Cascade API...`);
-    const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum] || 1035;
+    const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum];
+    if (!numericModelValue) {
+      // The Cascade protobuf needs the numeric wire enum. Models without a known
+      // numeric must fail here rather than silently running on another model.
+      throw new Error(`Model ${modelEnum} has no known Cascade wire enum value — image input is not supported for it.`);
+    }
     // Cascade is the ONLY endpoint that natively supports the 'media' field for images.
     const text = await callSidecarChat(ctx, messages, numericModelValue, null, null, images);
     return { content: text, toolCalls: null };

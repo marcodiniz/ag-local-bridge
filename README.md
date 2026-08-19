@@ -36,6 +36,9 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 | `antigravity-claude-sonnet-4-6`        | Claude Sonnet 4.6 with Thinking **(default)** |
 | `antigravity-claude-opus-4-6-thinking` | Claude Opus 4.6 with Thinking                 |
 | `antigravity-gemini-3-flash`           | Gemini 3 Flash                                |
+| `antigravity-gemini-3.5-flash`         | Gemini 3.5 Flash — High thinking              |
+| `antigravity-gemini-3.5-flash-medium`  | Gemini 3.5 Flash — Medium thinking            |
+| `antigravity-gemini-3.5-flash-low`     | Gemini 3.5 Flash — Low thinking               |
 | `antigravity-gemini-3.1-pro-high`      | Gemini 3.1 Pro — High thinking                |
 | `antigravity-gemini-3.1-pro-low`       | Gemini 3.1 Pro — Low thinking                 |
 | `antigravity-gpt-oss-120b`             | GPT-OSS 120B Medium                           |
