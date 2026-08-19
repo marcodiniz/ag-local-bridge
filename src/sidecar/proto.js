@@ -86,7 +86,10 @@ const commonProto = create(FileDescriptorProtoSchema, {
       MODEL_PLACEHOLDER_M26: 1026,
       MODEL_PLACEHOLDER_M35: 1035,
       MODEL_PLACEHOLDER_M36: 1036,
-      MODEL_PLACEHOLDER_M16: 1037,
+      MODEL_PLACEHOLDER_M16: 1016, // Corregido: Pro High
+      MODEL_PLACEHOLDER_M20: 1020, // Nuevo: Gemini 3.5 Flash Medium
+      MODEL_PLACEHOLDER_M133: 1133, // Nuevo: Gemini 3.5 Flash High
+      MODEL_PLACEHOLDER_M187: 1187, // Nuevo: Gemini 3.5 Flash Low
       MODEL_OPENAI_GPT_OSS_120B_MEDIUM: 342,
     }),
     makeEnum('ConversationalPlannerMode', {

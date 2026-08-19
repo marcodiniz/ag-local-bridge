@@ -90,7 +90,7 @@ describe('resolveModel', () => {
 
   it('resolves short-form alias gemini-3.1-pro-high', () => {
     const result = resolveModel('gemini-3.1-pro-high');
-    assert.equal(result.value, 1037);
+    assert.equal(result.value, 1016); // Corregido: 1016
     assert.equal(result.owned_by, 'google');
   });
 
@@ -102,6 +102,18 @@ describe('resolveModel', () => {
   it('resolves short-form alias gemini-3-flash-agent', () => {
     const result = resolveModel('gemini-3-flash-agent');
     assert.equal(result.value, 1018);
+  });
+
+  it('resolves gemini-3.5-flash aliases and exact models', () => {
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash').value, 1133);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash-high').value, 1133);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash-medium').value, 1020);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash-low').value, 1187);
+
+    assert.equal(resolveModel('gemini-3.5-flash').value, 1133);
+    assert.equal(resolveModel('gemini-3.5-flash-high').value, 1133);
+    assert.equal(resolveModel('gemini-3.5-flash-medium').value, 1020);
+    assert.equal(resolveModel('gemini-3.5-flash-low').value, 1187);
   });
 
   it('resolves short-form alias gpt-oss-120b-medium', () => {

@@ -91,7 +91,7 @@ describe('Anthropic message conversion', () => {
   it('correctly identifies gemini short-form alias', () => {
     const { resolveModel } = require('../src/models');
     const resolved = resolveModel('gemini-3.1-pro-high');
-    assert.equal(resolved.value, 1037);
+    assert.equal(resolved.value, 1016);
   });
 });
 
