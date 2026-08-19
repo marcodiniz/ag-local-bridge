@@ -23,11 +23,12 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 
 ## Features
 
-- **OpenAI-compatible API** — drop-in replacement for any tool expecting OpenAI format
-- **Multimedia input support** — images, audio, video, and files from OpenAI/Responses clients are forwarded through Antigravity's media channel when possible
-- **Workspace-aware** — automatically detects and sets the correct project context via `x-workspace-dir` / `x-workspace-uri` headers
-- **Conversation multiplexing** — reuses Cascade conversations for efficiency, with automatic retry on capacity errors
-- **Streaming & non-streaming** — both modes supported
+- **Multi-Protocol API** — drop-in compatible with **OpenAI** (`/v1/chat/completions`), **Anthropic** (`/v1/messages`), and **Gemini** (`/v1beta/models/...`)
+- **3-Way Streaming Strategy** — configurable `smart` (instant low-TTFB pseudo-streaming for chat + raw for tools), `raw` (pure LLM completions & swarm), or `cascade`
+- **Multi-Sidecar Swarm** — automatic round-robin load balancing and quota pooling across multiple Google accounts
+- **Multimedia Input Support** — images, audio, video, and files forwarded through Antigravity's media channels
+- **Function Calling & Tools** — full support for client-side tool calling and structured outputs
+- **Workspace-Aware** — automatically detects and applies workspace context via `x-workspace-dir` / `x-workspace-uri` headers
 
 ## Available Models
 
@@ -35,13 +36,21 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 | -------------------------------------- | --------------------------------------------- |
 | `antigravity-claude-sonnet-4-6`        | Claude Sonnet 4.6 with Thinking **(default)** |
 | `antigravity-claude-opus-4-6-thinking` | Claude Opus 4.6 with Thinking                 |
-| `antigravity-gemini-3-flash`           | Gemini 3 Flash                                |
+| `antigravity-gemini-3.7-flash-high`    | Gemini 3.7 Flash — High thinking              |
+| `antigravity-gemini-3.7-flash-medium`  | Gemini 3.7 Flash — Medium thinking            |
+| `antigravity-gemini-3.7-flash-low`     | Gemini 3.7 Flash — Low thinking               |
+| `antigravity-gemini-3.6-flash-high`    | Gemini 3.6 Flash — High thinking              |
+| `antigravity-gemini-3.6-flash-medium`  | Gemini 3.6 Flash — Medium thinking            |
+| `antigravity-gemini-3.6-flash-low`     | Gemini 3.6 Flash — Low thinking               |
 | `antigravity-gemini-3.5-flash`         | Gemini 3.5 Flash — High thinking              |
 | `antigravity-gemini-3.5-flash-medium`  | Gemini 3.5 Flash — Medium thinking            |
 | `antigravity-gemini-3.5-flash-low`     | Gemini 3.5 Flash — Low thinking               |
+| `antigravity-gemini-3-flash`           | Gemini 3 Flash                                |
 | `antigravity-gemini-3.1-pro-high`      | Gemini 3.1 Pro — High thinking                |
 | `antigravity-gemini-3.1-pro-low`       | Gemini 3.1 Pro — Low thinking                 |
 | `antigravity-gpt-oss-120b`             | GPT-OSS 120B Medium                           |
+
+> **Short aliases**: All models can also be referenced with intuitive short names like `gemini-3.7`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
 
 ## Installation
 
@@ -186,13 +195,35 @@ API Key:  anything (not validated)
 
 ## API Endpoints
 
+### OpenAI Endpoints
+
 | Method | Path                   | Description                                 |
 | ------ | ---------------------- | ------------------------------------------- |
-| `GET`  | `/v1/models`           | List available models                       |
+| `GET`  | `/v1/models`           | List available models in OpenAI format      |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming & non-streaming) |
 | `POST` | `/v1/responses`        | OpenAI Responses API adapter                |
-| `POST` | `/v1/proxy`            | Forward arbitrary RPC to sidecar            |
-| `GET`  | `/v1/debug`            | Debug info (sidecar ports, CSRF, captures)  |
+
+### Anthropic Endpoints
+
+| Method | Path                        | Description                                 |
+| ------ | --------------------------- | ------------------------------------------- |
+| `POST` | `/v1/messages`              | Anthropic Messages API (streaming & tools)  |
+| `POST` | `/v1/messages/count_tokens` | Preflight token count mock (for Claude CLI) |
+
+### Gemini Endpoints
+
+| Method | Path                                          | Description                      |
+| ------ | --------------------------------------------- | -------------------------------- |
+| `GET`  | `/v1beta/models`                              | List models in Gemini format     |
+| `POST` | `/v1beta/models/:model:generateContent`       | Gemini Native generateContent    |
+| `POST` | `/v1beta/models/:model:streamGenerateContent` | Gemini Native streaming endpoint |
+
+### Utility & Debug Endpoints
+
+| Method | Path        | Description                                |
+| ------ | ----------- | ------------------------------------------ |
+| `POST` | `/v1/proxy` | Forward arbitrary RPC to sidecar           |
+| `GET`  | `/v1/debug` | Debug info (sidecar ports, CSRF, captures) |
 
 ## Multimedia Support
 
