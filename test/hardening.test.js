@@ -2,7 +2,6 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const http = require('http');
 const { fetchMediaAsBase64 } = require('../src/images');
 const { clearH2Clients } = require('../src/sidecar/rpc');
 

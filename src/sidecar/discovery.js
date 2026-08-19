@@ -192,7 +192,7 @@ function windowsStrategy(binaryNames) {
                 if (cmdMatch) {
                   candidates.push({ pid, commandLine: cmdMatch[1].trim(), user: '' });
                 }
-              } catch (err) {
+              } catch (_err) {
                 // wmic failed for this PID — skip it
               }
             }
@@ -200,7 +200,7 @@ function windowsStrategy(binaryNames) {
             const best = chooseBestProcess(candidates, currentWorkspaceId);
             if (best) return best;
           }
-        } catch (err) {
+        } catch (_err) {
           // tasklist or wmic unavailable — fall through
         }
 
@@ -233,7 +233,7 @@ function windowsStrategy(binaryNames) {
             const best = chooseBestProcess(candidates, currentWorkspaceId);
             if (best) return best;
           }
-        } catch (err) {
+        } catch (_err) {
           // wmic may not be available on newer Windows — fall through to PowerShell
         }
 
@@ -263,7 +263,7 @@ function windowsStrategy(binaryNames) {
 
           const best = chooseBestProcess(candidates, currentWorkspaceId);
           if (best) return best;
-        } catch (err) {
+        } catch (_err) {
           // All strategies failed for this binary name — try next
         }
       }
@@ -462,11 +462,49 @@ async function _discoverSidecarOnce(ctx) {
     const actualPorts = await strategy.findListeningPorts(pid);
 
     // 4. Find cert
-    const agExt = vscode.extensions.getExtension('google.antigravity');
     let certPath = null;
+    const agExt = vscode.extensions.getExtension('google.antigravity');
     if (agExt) {
       const candidate = path.join(agExt.extensionPath, 'dist', 'languageServer', 'cert.pem');
       if (fs.existsSync(candidate)) certPath = candidate;
+    }
+    if (!certPath) {
+      const candidatePaths = [
+        path.join(
+          os.homedir(),
+          'AppData',
+          'Local',
+          'Programs',
+          'Antigravity IDE',
+          'resources',
+          'app',
+          'extensions',
+          'antigravity',
+          'dist',
+          'languageServer',
+          'cert.pem',
+        ),
+        path.join(
+          os.homedir(),
+          'AppData',
+          'Local',
+          'Programs',
+          'Antigravity',
+          'resources',
+          'app',
+          'extensions',
+          'antigravity',
+          'dist',
+          'languageServer',
+          'cert.pem',
+        ),
+      ];
+      for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+          certPath = p;
+          break;
+        }
+      }
     }
 
     // 5. Collect tokens (main CSRF first — that's what the HTTPS server validates)

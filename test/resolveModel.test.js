@@ -21,7 +21,7 @@ describe('resolveModel', () => {
   });
 
   it('resolves Gemini 3.5 Flash tiers', () => {
-    assert.equal(resolveModel('antigravity-gemini-3.5-flash').value, 1133);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash').value, 1084);
     assert.equal(resolveModel('antigravity-gemini-3.5-flash-medium').value, 1020);
     assert.equal(resolveModel('antigravity-gemini-3.5-flash-low').value, 1187);
   });
@@ -102,9 +102,76 @@ describe('resolveModel', () => {
     assert.equal(result.value, 1026);
   });
 
+  it('resolves short-form alias gemini-3.7-flash-high', () => {
+    const result = resolveModel('gemini-3.7-flash-high');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+    assert.equal(result.owned_by, 'google');
+  });
+
+  it('resolves short-form alias gemini-3.7-flash-medium', () => {
+    const result = resolveModel('gemini-3.7-flash-medium');
+    assert.equal(result.value, 1299);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M299');
+  });
+
+  it('resolves short-form alias gemini-3.7-flash-low', () => {
+    const result = resolveModel('gemini-3.7-flash-low');
+    assert.equal(result.value, 1300);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M300');
+  });
+
+  it('resolves short-form alias gemini-3.7-flash', () => {
+    const result = resolveModel('gemini-3.7-flash');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+  });
+
+  it('resolves short-form alias gemini-3.7', () => {
+    const result = resolveModel('gemini-3.7');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+  });
+
+  it('resolves alias gemini-3.7-thinking', () => {
+    const result = resolveModel('gemini-3.7-thinking');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+  });
+
+  it('resolves alias gemini-3.7-flash-thinking', () => {
+    const result = resolveModel('gemini-3.7-flash-thinking');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+  });
+
+  it('resolves alias antigravity-gemini-3.7', () => {
+    const result = resolveModel('antigravity-gemini-3.7');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+  });
+
+  it('resolves alias antigravity-gemini-3.7-flash', () => {
+    const result = resolveModel('antigravity-gemini-3.7-flash');
+    assert.equal(result.value, 1298);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M298');
+  });
+
+  it('resolves short-form alias gemini-3.6-flash-high', () => {
+    const result = resolveModel('gemini-3.6-flash-high');
+    assert.equal(result.value, 1071);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M71');
+  });
+
+  it('resolves short-form alias gemini-3.5-flash-high', () => {
+    const result = resolveModel('gemini-3.5-flash-high');
+    assert.equal(result.value, 1084);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M84');
+  });
+
   it('resolves short-form alias gemini-3.1-pro-high', () => {
     const result = resolveModel('gemini-3.1-pro-high');
-    assert.equal(result.value, 1016); // Corregido: 1016
+    assert.equal(result.value, 1037);
     assert.equal(result.owned_by, 'google');
   });
 
@@ -119,13 +186,13 @@ describe('resolveModel', () => {
   });
 
   it('resolves gemini-3.5-flash aliases and exact models', () => {
-    assert.equal(resolveModel('antigravity-gemini-3.5-flash').value, 1133);
-    assert.equal(resolveModel('antigravity-gemini-3.5-flash-high').value, 1133);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash').value, 1084);
+    assert.equal(resolveModel('antigravity-gemini-3.5-flash-high').value, 1084);
     assert.equal(resolveModel('antigravity-gemini-3.5-flash-medium').value, 1020);
     assert.equal(resolveModel('antigravity-gemini-3.5-flash-low').value, 1187);
 
-    assert.equal(resolveModel('gemini-3.5-flash').value, 1133);
-    assert.equal(resolveModel('gemini-3.5-flash-high').value, 1133);
+    assert.equal(resolveModel('gemini-3.5-flash').value, 1084);
+    assert.equal(resolveModel('gemini-3.5-flash-high').value, 1084);
     assert.equal(resolveModel('gemini-3.5-flash-medium').value, 1020);
     assert.equal(resolveModel('gemini-3.5-flash-low').value, 1187);
   });

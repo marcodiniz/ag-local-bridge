@@ -13,25 +13,10 @@ const {
   extractProviderError,
 } = require('../utils');
 const { extractText, extractAllMedia } = require('../images');
-const { resolveModel } = require('../models');
+const { resolveModel, VALUE_TO_MODEL_ENUM } = require('../models');
 const { resolveWorkspace } = require('../workspace');
 const { callRawInference } = require('../sidecar/raw');
 const { sanitizeRequest } = require('../sanitize');
-
-// Map numeric model enum values → GetModelResponse string enum
-const VALUE_TO_MODEL_ENUM = {
-  1018: 'MODEL_PLACEHOLDER_M18', // Flash
-  1016: 'MODEL_PLACEHOLDER_M16', // Pro High (Corrected value 1016)
-  1037: 'MODEL_PLACEHOLDER_M16', // Pro High (Legacy value backup)
-  1036: 'MODEL_PLACEHOLDER_M36', // Pro Low
-  1035: 'MODEL_PLACEHOLDER_M35', // Sonnet
-  1026: 'MODEL_PLACEHOLDER_M26', // Opus
-  1020: 'MODEL_PLACEHOLDER_M20', // Gemini 3.5 Flash Medium
-  1133: 'MODEL_PLACEHOLDER_M133', // Gemini 3.5 Flash High
-  1187: 'MODEL_PLACEHOLDER_M187', // Gemini 3.5 Flash Low
-  342: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', // GPT-OSS 120B
-};
-
 // ─────────────────────────────────────────────
 // POST /v1/chat/completions
 // ─────────────────────────────────────────────
@@ -217,7 +202,7 @@ async function _handleChatCompletionsInner(
   }
 
   const tools = payload.tools && payload.tools.length > 0 ? payload.tools : null;
-  const modelEnum = VALUE_TO_MODEL_ENUM[resolved.value];
+  const modelEnum = resolved.modelEnum || VALUE_TO_MODEL_ENUM[resolved.value];
 
   if (!modelEnum) {
     const errorMsg = `No raw model enum mapping for value ${resolved.value}. Raw inference unavailable.`;

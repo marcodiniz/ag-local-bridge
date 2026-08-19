@@ -4,7 +4,7 @@ const { MODEL_MAP } = require('../models');
 const { sendJson } = require('../utils');
 
 // ─────────────────────────────────────────────
-// GET /v1/models
+// GET /v1/models & /models
 // ─────────────────────────────────────────────
 
 async function handleModels(ctx, req, res) {
@@ -19,4 +19,23 @@ async function handleModels(ctx, req, res) {
   sendJson(res, 200, { object: 'list', data });
 }
 
-module.exports = { handleModels };
+// ─────────────────────────────────────────────
+// GET /v1beta/models
+// ─────────────────────────────────────────────
+
+async function handleGeminiModels(ctx, req, res) {
+  const models = Object.entries(MODEL_MAP)
+    .filter(([, m]) => !m.hidden)
+    .map(([id, m]) => ({
+      name: `models/${id}`,
+      version: '001',
+      displayName: m.name,
+      description: m.name,
+      inputTokenLimit: m.context || 1048576,
+      outputTokenLimit: m.output || 65536,
+      supportedGenerationMethods: ['generateContent', 'countTokens'],
+    }));
+  sendJson(res, 200, { models });
+}
+
+module.exports = { handleModels, handleGeminiModels };

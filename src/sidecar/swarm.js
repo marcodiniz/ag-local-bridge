@@ -237,7 +237,7 @@ async function _findAllProcessesWindows(binaryNames) {
   for (const binaryName of binaryNames) {
     try {
       const psCmd = `Get-CimInstance Win32_Process -Filter "Name='${binaryName}'" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress`;
-      const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+      const { stdout } = await execFileAsync(powershellExe, ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
         encoding: 'utf8',
         timeout: 10000,
       });

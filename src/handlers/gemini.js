@@ -1,23 +1,10 @@
 'use strict';
 
 const { log, sendJson, readBody, parseRetryAfter, extractProviderError } = require('../utils');
-const { resolveModel } = require('../models');
+const { resolveModel, VALUE_TO_MODEL_ENUM } = require('../models');
 const { extractAllImages } = require('../images');
 const { callRawInference } = require('../sidecar/raw');
 const { sanitizeRequest } = require('../sanitize');
-
-const VALUE_TO_MODEL_ENUM = {
-  1018: 'MODEL_PLACEHOLDER_M18', // Flash
-  1016: 'MODEL_PLACEHOLDER_M16', // Pro High (Corrected value 1016)
-  1037: 'MODEL_PLACEHOLDER_M16', // Pro High (Legacy value backup)
-  1036: 'MODEL_PLACEHOLDER_M36', // Pro Low
-  1035: 'MODEL_PLACEHOLDER_M35', // Sonnet
-  1026: 'MODEL_PLACEHOLDER_M26', // Opus
-  1020: 'MODEL_PLACEHOLDER_M20', // Gemini 3.5 Flash Medium
-  1133: 'MODEL_PLACEHOLDER_M133', // Gemini 3.5 Flash High
-  1187: 'MODEL_PLACEHOLDER_M187', // Gemini 3.5 Flash Low
-  342: 'MODEL_OPENAI_GPT_OSS_120B_MEDIUM', // GPT-OSS 120B
-};
 
 // ─────────────────────────────────────────────
 // Gemini → OpenAI message conversion
@@ -144,7 +131,7 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
   }
   log(ctx, `📡 [Gemini] Model: ${resolved.key} (enum=${resolved.value})`);
 
-  const modelEnum = VALUE_TO_MODEL_ENUM[resolved.value];
+  const modelEnum = resolved.modelEnum || VALUE_TO_MODEL_ENUM[resolved.value];
   if (!modelEnum) {
     const msg = `No raw model enum mapping for value ${resolved.value}.`;
     return sendJson(res, 400, { error: { code: 400, message: msg, status: 'INVALID_ARGUMENT' } });

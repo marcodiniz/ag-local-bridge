@@ -109,9 +109,18 @@ async function discoverSidecar() {
     } catch { }
     // Try the app install location on Windows
     if (!certPath) {
-        const appCert = path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Antigravity',
-            'resources', 'app', 'extensions', 'antigravity', 'dist', 'languageServer', 'cert.pem');
-        if (fs.existsSync(appCert)) certPath = appCert;
+        const candidatePaths = [
+            path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Antigravity IDE',
+                'resources', 'app', 'extensions', 'antigravity', 'dist', 'languageServer', 'cert.pem'),
+            path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Antigravity',
+                'resources', 'app', 'extensions', 'antigravity', 'dist', 'languageServer', 'cert.pem'),
+        ];
+        for (const p of candidatePaths) {
+            if (fs.existsSync(p)) {
+                certPath = p;
+                break;
+            }
+        }
     }
 
     const allPorts = [...new Set([

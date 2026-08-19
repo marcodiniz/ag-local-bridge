@@ -24,16 +24,24 @@ if ($PSScriptRoot -and (Test-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
     exit 1
 }
 
-$extBase = "$env:USERPROFILE\.antigravity\extensions"
+$extBases = @(
+    "$env:USERPROFILE\.antigravity-ide\extensions",
+    "$env:USERPROFILE\.antigravity\extensions",
+    "$env:USERPROFILE\.vscode\extensions"
+)
 
-# Find ALL installed extension directories (handles multiple versions)
+# Find ALL installed extension directories (handles multiple versions and locations)
 $candidates = @()
-$candidates += Get-ChildItem $extBase -Directory -Filter "*ag-local-bridge*" -ErrorAction SilentlyContinue
-$candidates += Get-ChildItem $extBase -Directory -Filter "antigravity-bridge*" -ErrorAction SilentlyContinue
+foreach ($base in $extBases) {
+    if (Test-Path $base) {
+        $candidates += Get-ChildItem $base -Directory -Filter "*ag-local-bridge*" -ErrorAction SilentlyContinue
+        $candidates += Get-ChildItem $base -Directory -Filter "antigravity-bridge*" -ErrorAction SilentlyContinue
+    }
+}
 $candidates = $candidates | Select-Object -Unique
 
 if ($candidates.Count -eq 0) {
-    Write-Error "No ag-local-bridge extension found in $extBase"
+    Write-Error "No ag-local-bridge extension found in: $($extBases -join ', ')"
     exit 1
 }
 
@@ -75,11 +83,17 @@ foreach ($extDir in $candidates) {
         Write-Host "[2/4] No monolithic extension.js to backup" -ForegroundColor DarkYellow
     }
 
-    # 3. Copy src/ and package.json
-    Write-Host "[3/4] Deploying src/ and package.json..." -ForegroundColor Yellow
+    # 3. Copy src/, package.json, and node_modules
+    Write-Host "[3/4] Deploying src/, package.json, and node_modules..." -ForegroundColor Yellow
     Remove-Item "$dest\src" -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item "$repo\src" -Destination "$dest\src" -Recurse -Force
     Copy-Item "$repo\package.json" -Destination "$dest\package.json" -Force
+
+    # Ensure production dependencies exist in extension directory
+    if (Test-Path "$repo\node_modules\@bufbuild") {
+        New-Item -ItemType Directory -Path "$dest\node_modules\@bufbuild" -Force | Out-Null
+        Copy-Item "$repo\node_modules\@bufbuild\*" -Destination "$dest\node_modules\@bufbuild" -Recurse -Force
+    }
 
     $deployed = (Get-ChildItem "$dest\src" -File -Recurse).Count
     Write-Host "  ✅ Deployed $deployed files" -ForegroundColor Green
@@ -90,7 +104,8 @@ foreach ($extDir in $candidates) {
         @{ Path = "$dest\src\extension.js"; Label = "src/extension.js exists" },
         @{ Path = "$dest\src\sidecar\raw.js"; Label = "raw.js exists" },
         @{ Path = "$dest\src\sidecar\rpc.js"; Label = "rpc.js exists" },
-        @{ Path = "$dest\src\handlers\openai.js"; Label = "openai.js exists" }
+        @{ Path = "$dest\src\handlers\openai.js"; Label = "openai.js exists" },
+        @{ Path = "$dest\node_modules\@bufbuild\protobuf"; Label = "node_modules/@bufbuild/protobuf exists" }
     )
 
     foreach ($check in $checks) {

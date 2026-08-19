@@ -7,18 +7,7 @@ const { makeH2JsonCall, clearH2Clients } = require('./rpc');
 const { callSidecarChat } = require('./cascade');
 const { discoverSwarm, getNextSwarmMember, invalidateSwarmCache, markSwarmMemberExhausted } = require('./swarm');
 
-// Map raw-inference string enum → sidecar numeric model value
-const MODEL_ENUM_TO_VALUE = {
-  MODEL_PLACEHOLDER_M18: 1018,
-  MODEL_PLACEHOLDER_M16: 1016, // Corregido: Pro High
-  MODEL_PLACEHOLDER_M36: 1036,
-  MODEL_PLACEHOLDER_M35: 1035,
-  MODEL_PLACEHOLDER_M26: 1026,
-  MODEL_PLACEHOLDER_M20: 1020, // Nuevo: Gemini 3.5 Medium
-  MODEL_PLACEHOLDER_M133: 1133, // Nuevo: Gemini 3.5 High
-  MODEL_PLACEHOLDER_M187: 1187, // Nuevo: Gemini 3.5 Low
-  MODEL_OPENAI_GPT_OSS_120B_MEDIUM: 342,
-};
+const { MODEL_ENUM_TO_VALUE } = require('../models');
 
 // ─────────────────────────────────────────────
 // Raw Inference via GetModelResponse
@@ -463,7 +452,7 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
     if (activeAccount && activeAccount.email) {
       triedAccountEmails.add(activeAccount.email);
     }
-  } catch (e) {
+  } catch (_e) {
     // Switchboard not active or initialized
   }
 

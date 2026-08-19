@@ -148,11 +148,8 @@ When multiple sidecars are available (swarm mode), round-robins across them.
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
 - Timeout: **15 minutes** (LLM inference can be very slow)
-- Model enum values: `MODEL_PLACEHOLDER_M18` (Flash), `MODEL_PLACEHOLDER_M132` (3.5 Flash High),
-  `MODEL_PLACEHOLDER_M20` (3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (3.5 Flash Low), `MODEL_PLACEHOLDER_M16` (Pro High),
-  `MODEL_PLACEHOLDER_M36` (Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet), `MODEL_PLACEHOLDER_M26` (Opus), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
-- The authoritative label ↔ enum-name table can be queried live from the sidecar via the
-  `GetCascadeModelConfigData` RPC (e.g. through the bridge's own `/v1/proxy` debug endpoint)
+- Model enum values: `MODEL_PLACEHOLDER_M298` (Gemini 3.7 Flash High), `MODEL_PLACEHOLDER_M299` (Gemini 3.7 Flash Medium), `MODEL_PLACEHOLDER_M300` (Gemini 3.7 Flash Low), `MODEL_PLACEHOLDER_M71` (Gemini 3.6 Flash High), `MODEL_PLACEHOLDER_M72` (Gemini 3.6 Flash Medium), `MODEL_PLACEHOLDER_M73` (Gemini 3.6 Flash Low), `MODEL_PLACEHOLDER_M84` (Gemini 3.5 Flash High), `MODEL_PLACEHOLDER_M20` (Gemini 3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (Gemini 3.5 Flash Low), `MODEL_PLACEHOLDER_M18` (Gemini 3 Flash), `MODEL_PLACEHOLDER_M16` (Gemini 3.1 Pro High), `MODEL_PLACEHOLDER_M36` (Gemini 3.1 Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet 4.6), `MODEL_PLACEHOLDER_M26` (Opus 4.6), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
+- Dynamic discovery: The authoritative label ↔ enum-name table is queried live from the sidecar via the `GetCascadeModelConfigData` RPC.
 - **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
   `ctx.sidecarInfo` is cleared to force re-discovery on the next request (handles CSRF rotation).
 
@@ -231,8 +228,9 @@ convert the request/response format.
 - `POST /v1/messages/count_tokens` — preflight mock (returns `{"input_tokens": 0}`)
   - Required by Claude CLI and Cherry Studio before every conversation
 
-#### Gemini (`src/handlers/gemini.js`)
+#### Gemini (`src/handlers/gemini.js`, `src/handlers/models.js`)
 
+- `GET /v1beta/models` — lists models in Gemini format (`{"models": [...]}`)
 - `POST /v1beta/models/:model:generateContent` — Gemini native format
 - `POST /v1beta/models/:model:streamGenerateContent` — streaming variant
 - Accepts `x-goog-api-key` header (no Authorization header needed)
@@ -244,18 +242,30 @@ convert the request/response format.
 `src/models.js` supports both the full `antigravity-*` prefixed IDs (shown in `/v1/models`)
 and short-form aliases (hidden from model list) for compatibility with other tools:
 
-| Short alias                | Full ID                                | Enum value |
-| -------------------------- | -------------------------------------- | ---------- |
-| `claude-sonnet-4-6`        | `antigravity-claude-sonnet-4-6`        | 1035       |
-| `claude-opus-4-6-thinking` | `antigravity-claude-opus-4-6-thinking` | 1026       |
-| `gemini-3.1-pro-high`      | `antigravity-gemini-3.1-pro-high`      | 1037       |
-| `gemini-3.1-pro-low`       | `antigravity-gemini-3.1-pro-low`       | 1036       |
-| `gemini-3-flash-agent`     | `antigravity-gemini-3-flash`           | 1018       |
-| `gemini-3.5-flash`         | `antigravity-gemini-3.5-flash`         | 1040 ⚠     |
-| `gemini-3.5-flash-medium`  | `antigravity-gemini-3.5-flash-medium`  | 1041 ⚠     |
-| `gemini-3.5-flash-low`     | `antigravity-gemini-3.5-flash-low`     | 1042 ⚠     |
-
-⚠ Values 1040–1042 are **bridge-internal indices only**, not Cascade wire enums — the
-`GetCascadeModelConfigData` RPC exposes string enum names without numerics. Do not add
-them to the protobuf maps in `src/sidecar/proto.js` / `src/sidecar/raw.js`.
-| `gpt-oss-120b-medium`      | `antigravity-gpt-oss-120b`             | 342        |
+| Short alias                    | Full ID                                | Enum value |
+| ------------------------------ | -------------------------------------- | ---------- |
+| `gemini-3.7-flash-high`        | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `gemini-3.7-flash-medium`      | `antigravity-gemini-3.7-flash-medium`  | 1299       |
+| `gemini-3.7-flash-low`         | `antigravity-gemini-3.7-flash-low`     | 1300       |
+| `gemini-3.7-flash`             | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `gemini-3.7`                   | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `gemini-3.7-thinking`          | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `gemini-3.7-flash-thinking`    | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `antigravity-gemini-3.7`       | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `antigravity-gemini-3.7-flash` | `antigravity-gemini-3.7-flash-high`    | 1298       |
+| `gemini-3.6-flash-high`        | `antigravity-gemini-3.6-flash-high`    | 1071       |
+| `gemini-3.6-flash-medium`      | `antigravity-gemini-3.6-flash-medium`  | 1072       |
+| `gemini-3.6-flash-low`         | `antigravity-gemini-3.6-flash-low`     | 1073       |
+| `gemini-3.6-flash`             | `antigravity-gemini-3.6-flash-high`    | 1071       |
+| `gemini-3.5-flash-high`        | `antigravity-gemini-3.5-flash-high`    | 1084       |
+| `gemini-3.5-flash-medium`      | `antigravity-gemini-3.5-flash-medium`  | 1020       |
+| `gemini-3.5-flash-low`         | `antigravity-gemini-3.5-flash-low`     | 1187       |
+| `gemini-3.5-flash`             | `antigravity-gemini-3.5-flash-high`    | 1084       |
+| `gemini-3-flash-agent`         | `antigravity-gemini-3-flash`           | 1018       |
+| `gemini-3.1-pro-high`          | `antigravity-gemini-3.1-pro-high`      | 1037       |
+| `gemini-3.1-pro-low`           | `antigravity-gemini-3.1-pro-low`       | 1036       |
+| `gemini-3.1-pro`               | `antigravity-gemini-3.1-pro-high`      | 1037       |
+| `gemini-pro-agent`             | `antigravity-gemini-3.1-pro-high`      | 1037       |
+| `claude-sonnet-4-6`            | `antigravity-claude-sonnet-4-6`        | 1035       |
+| `claude-opus-4-6-thinking`     | `antigravity-claude-opus-4-6-thinking` | 1026       |
+| `gpt-oss-120b-medium`          | `antigravity-gpt-oss-120b`             | 342        |

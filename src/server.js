@@ -3,7 +3,7 @@
 const vscode = require('vscode');
 const http = require('http');
 const { log, sendJson, updateStatusBar } = require('./utils');
-const { handleModels } = require('./handlers/models');
+const { handleModels, handleGeminiModels } = require('./handlers/models');
 const { handleChatCompletions } = require('./handlers/openai');
 const { handleResponses } = require('./handlers/responses');
 const { handleAnthropicMessages, handleCountTokens } = require('./handlers/anthropic');
@@ -143,6 +143,9 @@ async function handleRequest(ctx, req, res) {
 
   if (req.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
     return handleModels(ctx, req, res);
+  }
+  if (req.method === 'GET' && url.pathname === '/v1beta/models') {
+    return handleGeminiModels(ctx, req, res);
   }
   if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) {
     return handleChatCompletions(ctx, req, res);
