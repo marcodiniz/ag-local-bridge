@@ -697,10 +697,23 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
 
       const isRetryable =
         errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('401') ||
+        errMsg.includes('UNAUTHENTICATED') ||
+        errMsg.includes('Auth failure') ||
+        errMsg.includes('PERMISSION_DENIED') ||
         errMsg.includes('model not found') ||
-        errMsg.includes('unknown model key');
+        errMsg.includes('unknown model key') ||
+        errMsg.includes('ECONNRESET') ||
+        errMsg.includes('socket hang up') ||
+        errMsg.includes('pending stream has been canceled');
 
       if (attempt < MAX_RETRIES && isRetryable) {
+        if (errMsg.includes('401') || errMsg.includes('UNAUTHENTICATED') || errMsg.includes('Auth failure')) {
+          log(ctx, `🔄 Transient Auth/Token refresh (401) — clearing discovery cache to retry with fresh token...`);
+          ctx.sidecarInfo = null;
+          ctx.sidecarInfoTimestamp = 0;
+          clearRawEndpoint(ctx);
+        }
         log(ctx, `⚠️ Raw inference attempt ${attempt + 1} failed: ${errMsg.substring(0, 100)}`);
         continue;
       }
