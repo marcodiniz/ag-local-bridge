@@ -54,26 +54,6 @@ async function handleDebug(ctx, req, res) {
     result.commands = { error: e.message };
   }
 
-  // Switchboard status
-  result.switchboard = { accounts: [], active: null };
-  try {
-    const rawAccounts = await vscode.commands.executeCommand('ag.getAccounts');
-    result.switchboard.accounts = (rawAccounts || []).map((acc) => ({
-      id: acc.id,
-      email: acc.email,
-      name: acc.name,
-      isActive: acc.isActive,
-    }));
-  } catch (e) {
-    result.switchboard.accountsError = e.message;
-  }
-  try {
-    const rawActive = await vscode.commands.executeCommand('ag.getActiveAccount');
-    result.switchboard.active = rawActive ? { id: rawActive.id, email: rawActive.email, name: rawActive.name } : null;
-  } catch (e) {
-    result.switchboard.activeError = e.message;
-  }
-
   // Sidecar
   const info = await discoverSidecar(ctx);
   result.sidecar = info || { error: 'Not found' };
