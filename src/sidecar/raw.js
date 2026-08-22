@@ -40,9 +40,14 @@ function formatMessagesAsPrompt(messages, tools) {
   // If tools are provided, add them as a system-level block
   if (tools && tools.length > 0) {
     parts.push('# Available Tools\n');
-    parts.push('When you need to use a tool, respond with EXACTLY this format (one per line):');
+    parts.push('Before calling any tools, explain your reasoning and plan inside <thought>...</thought> tags.');
+    parts.push('When you need to use a tool, respond with this format (one per line):');
     parts.push('<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>\n');
-    parts.push('You may include multiple tool calls. You may think before calling tools by putting your reasoning inside <thought>...</thought> tags.');
+    parts.push('Example:');
+    parts.push('<thought>');
+    parts.push('I need to read the file to understand the current implementation.');
+    parts.push('</thought>');
+    parts.push('<tool_call>{"name": "read_file", "arguments": {"path": "src/index.ts"}}</tool_call>\n');
     parts.push('The user will execute the tools and return the results as [Tool Result: <tool_name>].');
     parts.push('CRITICAL: Do NOT simulate tool execution. Stop and wait for the real results to be returned.\n');
     for (const tool of tools) {
@@ -69,15 +74,16 @@ function formatMessagesAsPrompt(messages, tools) {
     } else if (role === 'user') {
       parts.push(`[User]\n${content}\n`);
     } else if (role === 'assistant') {
+      const thoughtBlock = (msg.reasoning_content || msg.reasoning) ? `<thought>\n${msg.reasoning_content || msg.reasoning}\n</thought>\n` : '';
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         // Format assistant tool calls so the model sees the conversation flow
         const toolCallTexts = msg.tool_calls.map((tc) => {
           const fn = tc.function || {};
           return `<tool_call>{"name": "${fn.name}", "arguments": ${fn.arguments || '{}'}}</tool_call>`;
         });
-        parts.push(`[Assistant]\n${content || ''}${toolCallTexts.join('\n')}\n`);
+        parts.push(`[Assistant]\n${thoughtBlock}${content ? content + '\n' : ''}${toolCallTexts.join('\n')}\n`);
       } else {
-        parts.push(`[Assistant]\n${content}\n`);
+        parts.push(`[Assistant]\n${thoughtBlock}${content || ''}\n`);
       }
     } else if (role === 'tool') {
       const toolName = msg.name || msg.tool_call_id || 'tool';

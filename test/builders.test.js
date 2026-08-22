@@ -29,7 +29,7 @@ describe('buildStreamChunk', () => {
 
   it('builds a reasoning chunk (reasoning content in delta)', () => {
     const chunk = buildStreamChunk('chatcmpl-456', 'test-model', null, null, 'Thinking...');
-    assert.deepEqual(chunk.choices[0].delta, { reasoning_content: 'Thinking...' });
+    assert.deepEqual(chunk.choices[0].delta, { role: 'assistant', reasoning_content: 'Thinking...' });
     assert.equal(chunk.choices[0].finish_reason, null);
   });
 

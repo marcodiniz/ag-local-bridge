@@ -125,8 +125,10 @@ function readBody(req, maxBytes = 10 * 1024 * 1024) {
 
 function buildStreamChunk(id, model, content, finishReason = null, reasoning = null) {
   const delta = {};
-  if (content !== null) {
+  if (content !== null || reasoning !== null) {
     delta.role = 'assistant';
+  }
+  if (content !== null) {
     delta.content = content;
   }
   if (reasoning !== null) {
