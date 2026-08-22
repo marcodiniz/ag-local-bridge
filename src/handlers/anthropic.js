@@ -297,31 +297,51 @@ async function handleAnthropicMessages(ctx, req, res) {
     log(ctx, `🧠 [Anthropic] Trying raw inference (${modelEnum})...`);
     const raw = await callRawInference(ctx, openAiMessages, modelEnum, openAiTools, images);
 
-    if (!raw || (!raw.content && !raw.toolCalls)) {
+    if (!raw || (!raw.content && !raw.toolCalls && !raw.reasoning)) {
       throw new Error('Raw inference returned empty content');
     }
 
     const responseText = raw.content || '';
-    log(ctx, `✅ [Anthropic] Raw inference succeeded (${responseText.length} chars)`);
+    log(
+      ctx,
+      `✅ [Anthropic] Raw inference succeeded (${responseText.length} chars${raw.reasoning ? `, ${raw.reasoning.length} chars reasoning` : ''}${raw.toolCalls ? `, ${raw.toolCalls.length} tool calls` : ''})`,
+    );
 
     if (isStream) {
       initiateStream(); // Ensure stream has started
+      let blockIndex = 0;
+
+      if (raw.reasoning) {
+        writeAnthropicEvent(res, 'content_block_start', {
+          type: 'content_block_start',
+          index: blockIndex,
+          content_block: { type: 'thinking', thinking: '' },
+        });
+        writeAnthropicEvent(res, 'content_block_delta', {
+          type: 'content_block_delta',
+          index: blockIndex,
+          delta: { type: 'thinking_delta', thinking: raw.reasoning },
+        });
+        writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
+        blockIndex++;
+      }
 
       if (raw.toolCalls && raw.toolCalls.length > 0) {
         // Emit each tool call as a tool_use block
         for (let i = 0; i < raw.toolCalls.length; i++) {
           const tc = raw.toolCalls[i];
+          const currIdx = blockIndex + i;
           writeAnthropicEvent(res, 'content_block_start', {
             type: 'content_block_start',
-            index: i,
+            index: currIdx,
             content_block: { type: 'tool_use', id: tc.id, name: tc.function.name, input: {} },
           });
           writeAnthropicEvent(res, 'content_block_delta', {
             type: 'content_block_delta',
-            index: i,
+            index: currIdx,
             delta: { type: 'input_json_delta', partial_json: tc.function.arguments || '{}' },
           });
-          writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: i });
+          writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: currIdx });
         }
         writeAnthropicEvent(res, 'message_delta', {
           type: 'message_delta',
@@ -332,7 +352,7 @@ async function handleAnthropicMessages(ctx, req, res) {
         // Stream text in chunks
         writeAnthropicEvent(res, 'content_block_start', {
           type: 'content_block_start',
-          index: 0,
+          index: blockIndex,
           content_block: { type: 'text', text: '' },
         });
 
@@ -340,11 +360,11 @@ async function handleAnthropicMessages(ctx, req, res) {
         if (responseText) {
           writeAnthropicEvent(res, 'content_block_delta', {
             type: 'content_block_delta',
-            index: 0,
+            index: blockIndex,
             delta: { type: 'text_delta', text: responseText },
           });
         }
-        writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: 0 });
+        writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
         writeAnthropicEvent(res, 'message_delta', {
           type: 'message_delta',
           delta: { stop_reason: 'end_turn', stop_sequence: null },
@@ -357,6 +377,9 @@ async function handleAnthropicMessages(ctx, req, res) {
     } else {
       // Non-streaming Anthropic response
       const content = [];
+      if (raw.reasoning) {
+        content.push({ type: 'thinking', thinking: raw.reasoning });
+      }
       if (raw.toolCalls && raw.toolCalls.length > 0) {
         for (const tc of raw.toolCalls) {
           let input;

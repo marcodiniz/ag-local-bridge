@@ -146,14 +146,11 @@ async function handleChatCompletions(ctx, req, res) {
       initiateStream();
     }, 20000);
 
-    let beatCount = 0;
     keepAliveTimer = setInterval(() => {
       initiateStream();
-      beatCount++;
-      // Send progressive thinking / reasoning deltas to satisfy client token watchdog timers
-      // and display live progress in the client UI without altering final response content.
-      const beatText = beatCount === 1 ? 'Thinking...' : ' .';
-      const beat = buildStreamChunk(completionId, resolved.key, null, null, beatText);
+      // Send a valid empty OpenAI delta to satisfy client/proxy connection watchdogs
+      // without polluting the client reasoning or content UI with fake progress dots.
+      const beat = buildStreamChunk(completionId, resolved.key, null);
       res.write(`data: ${JSON.stringify(beat)}\n\n`);
     }, 3500);
   }
@@ -251,17 +248,24 @@ async function _handleChatCompletionsInner(
   try {
     log(ctx, `🧠 Trying raw inference (${modelEnum})...`);
     const raw = await callRawInference(ctx, messages, modelEnum, tools, media);
-    if (raw && (raw.content || raw.toolCalls)) {
+    if (raw && (raw.content || raw.toolCalls || raw.reasoning)) {
       const text = raw.content || '';
-      log(ctx, `✅ Raw inference succeeded (${text.length} chars)`);
+      log(
+        ctx,
+        `✅ Raw inference succeeded (${text.length} chars${raw.reasoning ? `, ${raw.reasoning.length} chars reasoning` : ''}${raw.toolCalls ? `, ${raw.toolCalls.length} tool calls` : ''})`,
+      );
       if (isStream) {
         initiateStream();
+        if (raw.reasoning) {
+          const reasoningChunk = buildStreamChunk(completionId, resolved.key, null, null, raw.reasoning);
+          res.write(`data: ${JSON.stringify(reasoningChunk)}\n\n`);
+        }
         if (raw.toolCalls) {
           // Stream tool calls in OpenAI format, always supply at least an empty string to force 'role: assistant'
           const chunk = buildStreamChunk(completionId, resolved.key, text || '', null);
           chunk.choices[0].delta.tool_calls = raw.toolCalls;
           res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-        } else {
+        } else if (text) {
           res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, text))}\n\n`);
         }
         const finishReason = raw.toolCalls ? 'tool_calls' : 'stop';
@@ -270,6 +274,9 @@ async function _handleChatCompletionsInner(
         res.end();
       } else {
         const completion = buildCompletion(completionId, resolved.key, text);
+        if (raw.reasoning) {
+          completion.choices[0].message.reasoning_content = raw.reasoning;
+        }
         if (raw.toolCalls) {
           completion.choices[0].message.tool_calls = raw.toolCalls;
           completion.choices[0].finish_reason = 'tool_calls';

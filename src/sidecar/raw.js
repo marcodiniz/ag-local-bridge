@@ -42,7 +42,7 @@ function formatMessagesAsPrompt(messages, tools) {
     parts.push('# Available Tools\n');
     parts.push('When you need to use a tool, respond with EXACTLY this format (one per line):');
     parts.push('<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>\n');
-    parts.push('You may include multiple tool calls. After all tool calls, you may include additional text.');
+    parts.push('You may include multiple tool calls. You may think before calling tools by putting your reasoning inside <thought>...</thought> tags.');
     parts.push('The user will execute the tools and return the results as [Tool Result: <tool_name>].');
     parts.push('CRITICAL: Do NOT simulate tool execution. Stop and wait for the real results to be returned.\n');
     for (const tool of tools) {
@@ -107,6 +107,14 @@ function formatMessagesAsPrompt(messages, tools) {
  */
 function parseToolCalls(responseText) {
   const toolCalls = [];
+
+  // Extract reasoning (<thought> or <thinking>)
+  let reasoning = null;
+  const thoughtRegex = /<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/i;
+  const thoughtMatch = thoughtRegex.exec(responseText);
+  if (thoughtMatch) {
+    reasoning = thoughtMatch[1].trim() || null;
+  }
 
   // ── Hallucination fence ─────────────────────────────────────────────────
   // Only consider text before the first <observation> tag.
@@ -180,17 +188,19 @@ function parseToolCalls(responseText) {
     });
   }
 
-  // Remove tool blocks from the pre-fence text to get the pure conversational text.
+  // Remove tool blocks and thought blocks from the pre-fence text to get the pure conversational text.
   // Anything after firstObsIdx is hallucinated ReAct continuation — already excluded.
   let content = parseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
   content = content.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
   content = content.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, ''); // Common wrapper
   content = content.replace(/<invoke>[\s\S]*?<\/invoke>/g, '');
   content = content.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, '');
+  content = content.replace(/<(?:thought|thinking)>[\s\S]*?<\/(?:thought|thinking)>/gi, '');
   content = content.trim();
 
   return {
     content: content || null,
+    reasoning,
     toolCalls: toolCalls.length > 0 ? toolCalls : null,
   };
 }
@@ -408,10 +418,7 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
       }
 
       // Success!
-      if (tools && tools.length > 0) {
-        return parseToolCalls(responseText);
-      }
-      return { content: responseText, toolCalls: null };
+      return parseToolCalls(responseText);
     } catch (err) {
       const errMsg = err.message || '';
       log(ctx, `⚠️ 🐝 Sidecar PID=${member.pid} failed: ${errMsg.substring(0, 100)} — rotating...`);
@@ -586,10 +593,7 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
         throw new Error(`Auth failure (sidecar cache cleared): ${responseText.substring(0, 200)}`);
       }
 
-      if (tools && tools.length > 0) {
-        return parseToolCalls(responseText);
-      }
-      return { content: responseText, toolCalls: null };
+      return parseToolCalls(responseText);
     } catch (err) {
       const errMsg = err.message || '';
       const isRateLimitOrAuth =

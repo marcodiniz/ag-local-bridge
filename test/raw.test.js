@@ -149,4 +149,21 @@ The weather should be nice.
     assert.equal(args.unit, 'fahrenheit');
     assert.equal(result.content, 'The weather should be nice.');
   });
+
+  it('extracts thought tags into reasoning and cleans content', () => {
+    const text = '<thought>I should check the repository files.</thought>Here is the overview.';
+    const result = parseToolCalls(text);
+    assert.equal(result.reasoning, 'I should check the repository files.');
+    assert.equal(result.content, 'Here is the overview.');
+    assert.equal(result.toolCalls, null);
+  });
+
+  it('extracts thinking tags alongside tool calls', () => {
+    const text = '<thinking>I need to read package.json</thinking><tool_call>{"name": "read_file", "arguments": {"path": "package.json"}}</tool_call>';
+    const result = parseToolCalls(text);
+    assert.equal(result.reasoning, 'I need to read package.json');
+    assert.ok(result.content === null || result.content === '');
+    assert.equal(result.toolCalls.length, 1);
+    assert.equal(result.toolCalls[0].function.name, 'read_file');
+  });
 });
