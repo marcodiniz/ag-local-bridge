@@ -108,18 +108,16 @@ function formatMessagesAsPrompt(messages, tools) {
 function parseToolCalls(responseText) {
   const toolCalls = [];
 
-  // Extract reasoning (<thought> or <thinking>)
-  let reasoning = null;
-  const thoughtRegex = /<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/i;
-  const thoughtMatch = thoughtRegex.exec(responseText);
-  if (thoughtMatch) {
-    reasoning = thoughtMatch[1].trim() || null;
-  }
-
   // ── Hallucination fence ─────────────────────────────────────────────────
   // Only consider text before the first <observation> tag.
   const firstObsIdx = responseText.search(/(?:<observation>|\[Tool Result:|<tool_response>)/i);
   const parseText = firstObsIdx !== -1 ? responseText.substring(0, firstObsIdx) : responseText;
+
+  // Find the index of the first tool call tag
+  const firstToolMatch = parseText.match(/<(?:tool_call|minimax:tool_call|invoke|tool_use|function_calls)[\s>]/i);
+  const firstToolIdx = firstToolMatch ? firstToolMatch.index : -1;
+
+  let reasoning = null;
 
   // Parse 1: Custom JSON `<tool_call>` format
   const toolCallRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
@@ -188,14 +186,31 @@ function parseToolCalls(responseText) {
     });
   }
 
+  // Extract reasoning:
+  // Case A: Closed <thought>...</thought> or <thinking>...</thinking> tag anywhere in response
+  const closedThoughtMatch = responseText.match(/<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/i);
+  if (closedThoughtMatch) {
+    reasoning = closedThoughtMatch[1].trim() || null;
+  } else if (firstToolIdx !== -1) {
+    // Case B: Unclosed <thought> or <thinking> before tool call
+    const preText = parseText.substring(0, firstToolIdx);
+    const unclosedMatch = preText.match(/<(?:thought|thinking)>([\s\S]*)/i);
+    if (unclosedMatch) {
+      const thoughtBody = unclosedMatch[1].trim();
+      if (thoughtBody.length > 0) {
+        reasoning = thoughtBody;
+      }
+    }
+  }
+
   // Remove tool blocks and thought blocks from the pre-fence text to get the pure conversational text.
-  // Anything after firstObsIdx is hallucinated ReAct continuation — already excluded.
   let content = parseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
   content = content.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
   content = content.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, ''); // Common wrapper
   content = content.replace(/<invoke>[\s\S]*?<\/invoke>/g, '');
   content = content.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, '');
   content = content.replace(/<(?:thought|thinking)>[\s\S]*?<\/(?:thought|thinking)>/gi, '');
+  content = content.replace(/<(?:thought|thinking)>[\s\S]*/gi, '');
   content = content.trim();
 
   return {

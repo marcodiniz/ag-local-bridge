@@ -1,5 +1,7 @@
 'use strict';
 
+require('./setup');
+
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
@@ -165,5 +167,21 @@ The weather should be nice.
     assert.ok(result.content === null || result.content === '');
     assert.equal(result.toolCalls.length, 1);
     assert.equal(result.toolCalls[0].function.name, 'read_file');
+  });
+
+  it('extracts unclosed thought tags before tool calls into reasoning', () => {
+    const text = '<thought>I will inspect this file.\n<tool_call>{"name": "read_file", "arguments": {"path": "foo.js"}}</tool_call>';
+    const result = parseToolCalls(text);
+    assert.equal(result.reasoning, 'I will inspect this file.');
+    assert.equal(result.content, null);
+    assert.equal(result.toolCalls.length, 1);
+  });
+
+  it('preserves plain pre-tool text as content when calling tools', () => {
+    const text = 'Let me look up the code first.\n<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>';
+    const result = parseToolCalls(text);
+    assert.equal(result.content, 'Let me look up the code first.');
+    assert.equal(result.reasoning, null);
+    assert.equal(result.toolCalls.length, 1);
   });
 });
