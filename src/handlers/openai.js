@@ -146,14 +146,16 @@ async function handleChatCompletions(ctx, req, res) {
       initiateStream();
     }, 20000);
 
+    let beatCount = 0;
     keepAliveTimer = setInterval(() => {
       initiateStream();
-      // Send a valid empty OpenAI delta instead of a raw SSE comment.
-      // Generic iterators completely ignore SSE comments, which causes standard fetch chunk timeouts to trip if inference takes >30s.
-      // Yielding an actual empty delta successfully resets the client's internal read timer.
-      const beat = buildStreamChunk(completionId, resolved.key, null);
+      beatCount++;
+      // Send progressive thinking / reasoning deltas to satisfy client token watchdog timers
+      // and display live progress in the client UI without altering final response content.
+      const beatText = beatCount === 1 ? 'Thinking...' : ' .';
+      const beat = buildStreamChunk(completionId, resolved.key, null, null, beatText);
       res.write(`data: ${JSON.stringify(beat)}\n\n`);
-    }, 4500);
+    }, 3500);
   }
 
   try {

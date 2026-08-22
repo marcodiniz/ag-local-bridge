@@ -9,6 +9,16 @@ const { discoverSwarm, getNextSwarmMember, invalidateSwarmCache, markSwarmMember
 
 const { MODEL_ENUM_TO_VALUE } = require('../models');
 
+const RAW_MODEL_FALLBACKS = {
+  MODEL_PLACEHOLDER_M299: 'MODEL_PLACEHOLDER_M298', // Flash Medium -> Flash High
+  MODEL_PLACEHOLDER_M300: 'MODEL_PLACEHOLDER_M298', // Flash Low -> Flash High
+  MODEL_PLACEHOLDER_M72: 'MODEL_PLACEHOLDER_M71', // 3.6 Medium -> 3.6 High
+  MODEL_PLACEHOLDER_M73: 'MODEL_PLACEHOLDER_M71', // 3.6 Low -> 3.6 High
+  MODEL_PLACEHOLDER_M20: 'MODEL_PLACEHOLDER_M84', // 3.5 Medium -> 3.5 High
+  MODEL_PLACEHOLDER_M187: 'MODEL_PLACEHOLDER_M84', // 3.5 Low -> 3.5 High
+  MODEL_PLACEHOLDER_M36: 'MODEL_PLACEHOLDER_M16', // 3.1 Pro Low -> Pro High
+};
+
 // ─────────────────────────────────────────────
 // Raw Inference via GetModelResponse
 // Bypasses Cascade entirely — pure LLM inference.
@@ -33,10 +43,8 @@ function formatMessagesAsPrompt(messages, tools) {
     parts.push('When you need to use a tool, respond with EXACTLY this format (one per line):');
     parts.push('<tool_call>{"name": "tool_name", "arguments": {"arg1": "value1"}}</tool_call>\n');
     parts.push('You may include multiple tool calls. After all tool calls, you may include additional text.');
-    parts.push('The human will execute the tools and return the results enclosed in <observation> tags.');
-    parts.push(
-      'CRITICAL: Do NOT simulate tool execution. Do NOT generate <observation> tags yourself. Stop and wait for the human to return the results.\n',
-    );
+    parts.push('The user will execute the tools and return the results as [Tool Result: <tool_name>].');
+    parts.push('CRITICAL: Do NOT simulate tool execution. Stop and wait for the real results to be returned.\n');
     for (const tool of tools) {
       if (tool.type === 'function' && tool.function) {
         const fn = tool.function;
@@ -72,10 +80,8 @@ function formatMessagesAsPrompt(messages, tools) {
         parts.push(`[Assistant]\n${content}\n`);
       }
     } else if (role === 'tool') {
-      // Tool results are shown with their tool_call_id for context, enclosed in observation tags
-      // to satisfy models that are heavily fine-tuned on XML schema flows (Claude, Minimax)
       const toolName = msg.name || msg.tool_call_id || 'tool';
-      parts.push(`<observation>\n[Tool Result: ${toolName}]\n${content}\n</observation>\n`);
+      parts.push(`[Tool Result: ${toolName}]\n${content}\n`);
     }
   }
 
@@ -104,7 +110,7 @@ function parseToolCalls(responseText) {
 
   // ── Hallucination fence ─────────────────────────────────────────────────
   // Only consider text before the first <observation> tag.
-  const firstObsIdx = responseText.search(/<observation>/i);
+  const firstObsIdx = responseText.search(/(?:<observation>|\[Tool Result:|<tool_response>)/i);
   const parseText = firstObsIdx !== -1 ? responseText.substring(0, firstObsIdx) : responseText;
 
   // Parse 1: Custom JSON `<tool_call>` format
@@ -382,11 +388,9 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
       }
 
       if (responseText.trim().length === 0) {
-        return {
-          content:
-            '⚠️ **Inference Blocked**: The model returned an empty response. This usually occurs when the prompt triggers a Google API safety filter (e.g. sensitive code, PII, or security flags) or encounters a silent internal error. Please modify your prompt and try again.',
-          toolCalls: null,
-        };
+        log(ctx, `⚠️ 🐝 Sidecar PID=${member.pid} returned empty response — rotating to next candidate...`);
+        lastError = new Error('Empty response from model (safety filter or transient error)');
+        continue;
       }
 
       // Auth failure — skip this sidecar
@@ -435,6 +439,13 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
 
   // All members exhausted
   invalidateSwarmCache();
+  if (lastError && lastError.message.includes('Empty response')) {
+    return {
+      content:
+        '⚠️ **Inference Blocked**: The model returned an empty response across all candidates. This usually occurs when the prompt triggers a Google API safety filter (e.g. sensitive code, PII, or security flags) or encounters a silent internal error. Please modify your prompt and try again.',
+      toolCalls: null,
+    };
+  }
   throw lastError || new Error('All swarm members exhausted');
 }
 
@@ -463,6 +474,13 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
     }
     const endpointKey = getRawEndpointKey(info, mainCsrf);
     const candidatePorts = getCandidatePorts(info);
+
+    // If previous attempt returned empty response, try fallback model tier on last attempt
+    let activeModelEnum = modelEnum;
+    if (attempt === MAX_RETRIES && RAW_MODEL_FALLBACKS[modelEnum]) {
+      activeModelEnum = RAW_MODEL_FALLBACKS[modelEnum];
+      log(ctx, `🔄 Escalating to fallback model tier ${activeModelEnum} (attempt ${attempt + 1}/${MAX_RETRIES + 1})`);
+    }
 
     if (attempt > 0) {
       log(ctx, `⏳ Retry ${attempt}/${MAX_RETRIES} after ${RETRY_DELAY_MS / 1000}s backoff...`);
@@ -493,7 +511,7 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
       for (const port of portsToTry) {
         try {
           result = await enqueueInferenceForMember(info.pid, () =>
-            callGetModelResponseOnPort(ctx, info, mainCsrf, port, prompt, modelEnum, timeoutMs),
+            callGetModelResponseOnPort(ctx, info, mainCsrf, port, prompt, activeModelEnum, timeoutMs),
           );
           ctx.rawInferenceEndpoint = { key: endpointKey, port, lastUsed: Date.now() };
           break;
@@ -539,9 +557,17 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
       }
 
       if (responseText.trim().length === 0) {
+        if (attempt < MAX_RETRIES) {
+          log(
+            ctx,
+            `⚠️ Raw inference returned empty response (attempt ${attempt + 1}/${MAX_RETRIES + 1}) — retrying in 2s...`,
+          );
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
         return {
           content:
-            '⚠️ **Inference Blocked**: The model returned an empty response. This usually occurs when the prompt triggers a Google API safety filter (e.g. sensitive code, PII, or security flags) or encounters a silent internal error. Please modify your prompt and try again.',
+            '⚠️ **Inference Blocked**: The model returned an empty response after retries. This usually occurs when the prompt triggers a Google API safety filter (e.g. sensitive code, PII, or security flags) or encounters a silent internal error. Please modify your prompt and try again.',
           toolCalls: null,
         };
       }

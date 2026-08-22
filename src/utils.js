@@ -123,8 +123,15 @@ function readBody(req, maxBytes = 10 * 1024 * 1024) {
 // OpenAI Response Builders
 // ─────────────────────────────────────────────
 
-function buildStreamChunk(id, model, content, finishReason = null) {
-  const delta = content !== null ? { role: 'assistant', content } : {};
+function buildStreamChunk(id, model, content, finishReason = null, reasoning = null) {
+  const delta = {};
+  if (content !== null) {
+    delta.role = 'assistant';
+    delta.content = content;
+  }
+  if (reasoning !== null) {
+    delta.reasoning_content = reasoning;
+  }
   return {
     id,
     object: 'chat.completion.chunk',

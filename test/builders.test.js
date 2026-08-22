@@ -1,5 +1,7 @@
 'use strict';
 
+require('./setup');
+
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { buildStreamChunk, buildCompletion } = require('../src/utils');
@@ -23,6 +25,12 @@ describe('buildStreamChunk', () => {
     const chunk = buildStreamChunk('chatcmpl-456', 'test-model', null, 'stop');
     assert.deepEqual(chunk.choices[0].delta, {});
     assert.equal(chunk.choices[0].finish_reason, 'stop');
+  });
+
+  it('builds a reasoning chunk (reasoning content in delta)', () => {
+    const chunk = buildStreamChunk('chatcmpl-456', 'test-model', null, null, 'Thinking...');
+    assert.deepEqual(chunk.choices[0].delta, { reasoning_content: 'Thinking...' });
+    assert.equal(chunk.choices[0].finish_reason, null);
   });
 
   it('defaults finishReason to null when not specified', () => {
