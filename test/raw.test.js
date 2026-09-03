@@ -161,7 +161,8 @@ The weather should be nice.
   });
 
   it('extracts thinking tags alongside tool calls', () => {
-    const text = '<thinking>I need to read package.json</thinking><tool_call>{"name": "read_file", "arguments": {"path": "package.json"}}</tool_call>';
+    const text =
+      '<thinking>I need to read package.json</thinking><tool_call>{"name": "read_file", "arguments": {"path": "package.json"}}</tool_call>';
     const result = parseToolCalls(text);
     assert.equal(result.reasoning, 'I need to read package.json');
     assert.ok(result.content === null || result.content === '');
@@ -170,7 +171,8 @@ The weather should be nice.
   });
 
   it('extracts unclosed thought tags before tool calls into reasoning', () => {
-    const text = '<thought>I will inspect this file.\n<tool_call>{"name": "read_file", "arguments": {"path": "foo.js"}}</tool_call>';
+    const text =
+      '<thought>I will inspect this file.\n<tool_call>{"name": "read_file", "arguments": {"path": "foo.js"}}</tool_call>';
     const result = parseToolCalls(text);
     assert.equal(result.reasoning, 'I will inspect this file.');
     assert.equal(result.content, null);
@@ -178,7 +180,8 @@ The weather should be nice.
   });
 
   it('preserves plain pre-tool text as content when calling tools', () => {
-    const text = 'Let me look up the code first.\n<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>';
+    const text =
+      'Let me look up the code first.\n<tool_call>{"name": "search", "arguments": {"query": "test"}}</tool_call>';
     const result = parseToolCalls(text);
     assert.equal(result.content, 'Let me look up the code first.');
     assert.equal(result.reasoning, null);

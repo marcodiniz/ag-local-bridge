@@ -102,6 +102,61 @@ describe('resolveModel', () => {
     assert.equal(result.value, 1026);
   });
 
+  it('resolves short-form alias gemini-3.8-flash-high', () => {
+    const result = resolveModel('gemini-3.8-flash-high');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+    assert.equal(result.owned_by, 'google');
+  });
+
+  it('resolves short-form alias gemini-3.8-flash-medium', () => {
+    const result = resolveModel('gemini-3.8-flash-medium');
+    assert.equal(result.value, 1319);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M319');
+  });
+
+  it('resolves short-form alias gemini-3.8-flash-low', () => {
+    const result = resolveModel('gemini-3.8-flash-low');
+    assert.equal(result.value, 1320);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M320');
+  });
+
+  it('resolves short-form alias gemini-3.8-flash', () => {
+    const result = resolveModel('gemini-3.8-flash');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+  });
+
+  it('resolves short-form alias gemini-3.8', () => {
+    const result = resolveModel('gemini-3.8');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+  });
+
+  it('resolves alias gemini-3.8-thinking', () => {
+    const result = resolveModel('gemini-3.8-thinking');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+  });
+
+  it('resolves alias gemini-3.8-flash-thinking', () => {
+    const result = resolveModel('gemini-3.8-flash-thinking');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+  });
+
+  it('resolves alias antigravity-gemini-3.8', () => {
+    const result = resolveModel('antigravity-gemini-3.8');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+  });
+
+  it('resolves alias antigravity-gemini-3.8-flash', () => {
+    const result = resolveModel('antigravity-gemini-3.8-flash');
+    assert.equal(result.value, 1318);
+    assert.equal(result.modelEnum, 'MODEL_PLACEHOLDER_M318');
+  });
+
   it('resolves short-form alias gemini-3.7-flash-high', () => {
     const result = resolveModel('gemini-3.7-flash-high');
     assert.equal(result.value, 1298);

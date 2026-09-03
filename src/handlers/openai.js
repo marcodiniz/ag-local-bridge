@@ -139,20 +139,21 @@ async function handleChatCompletions(ctx, req, res) {
   };
 
   if (isStream) {
-    // Force stream headers after 20 seconds to prevent client TTFB (Time To First Byte) timeouts.
+    // Force stream headers after 2 seconds to prevent client TTFB (Time To First Byte) timeouts.
     // This gives sidecar discovery (wmic/PowerShell) and the H2 connection enough time to
     // fail fast and return a clean HTTP 429 before we commit to HTTP 200.
     preStreamTimer = setTimeout(() => {
       initiateStream();
-    }, 20000);
+    }, 2000);
 
+    let thinkingBeatCount = 0;
     keepAliveTimer = setInterval(() => {
       initiateStream();
-      // Send a valid empty OpenAI delta to satisfy client/proxy connection watchdogs
-      // without polluting the client reasoning or content UI with fake progress dots.
-      const beat = buildStreamChunk(completionId, resolved.key, null);
+      thinkingBeatCount++;
+      const deltaText = thinkingBeatCount === 1 ? 'Thinking' : '.';
+      const beat = buildStreamChunk(completionId, resolved.key, null, null, deltaText);
       res.write(`data: ${JSON.stringify(beat)}\n\n`);
-    }, 3500);
+    }, 5000);
   }
 
   try {
@@ -217,9 +218,16 @@ async function _handleChatCompletionsInner(
       log(ctx, `🌊 Streaming via Cascade trajectory delta polling (${resolved.key})...`);
       initiateStream();
       const stream = callSidecarChatStream(ctx, messages, resolved.value, workspaceDir, workspaceUri, media);
-      for await (const delta of stream) {
-        if (delta) {
-          res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, delta))}\n\n`);
+      for await (const chunk of stream) {
+        if (chunk) {
+          if (chunk.reasoning) {
+            res.write(
+              `data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, null, chunk.reasoning))}\n\n`,
+            );
+          }
+          if (chunk.delta) {
+            res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, chunk.delta))}\n\n`);
+          }
         }
       }
       res.write(`data: ${JSON.stringify(buildStreamChunk(completionId, resolved.key, null, 'stop'))}\n\n`);

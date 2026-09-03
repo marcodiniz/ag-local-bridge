@@ -26,7 +26,7 @@ function createMockRes() {
 }
 
 describe('handleModels', () => {
-  it('returns OpenAI-format models list containing Gemini 3.7 models', async () => {
+  it('returns OpenAI-format models list containing Gemini 3.7 and 3.8 models', async () => {
     const ctx = {};
     const req = {};
     const res = createMockRes();
@@ -38,6 +38,9 @@ describe('handleModels', () => {
     assert.ok(Array.isArray(res.body.data));
 
     const modelIds = res.body.data.map((m) => m.id);
+    assert.ok(modelIds.includes('antigravity-gemini-3.8-flash-high'));
+    assert.ok(modelIds.includes('antigravity-gemini-3.8-flash-medium'));
+    assert.ok(modelIds.includes('antigravity-gemini-3.8-flash-low'));
     assert.ok(modelIds.includes('antigravity-gemini-3.7-flash-high'));
     assert.ok(modelIds.includes('antigravity-gemini-3.7-flash-medium'));
     assert.ok(modelIds.includes('antigravity-gemini-3.7-flash-low'));
@@ -45,7 +48,7 @@ describe('handleModels', () => {
 });
 
 describe('handleGeminiModels', () => {
-  it('returns Gemini-format models list containing Gemini 3.7 models', async () => {
+  it('returns Gemini-format models list containing Gemini 3.7 and 3.8 models', async () => {
     const ctx = {};
     const req = {};
     const res = createMockRes();
@@ -56,6 +59,9 @@ describe('handleGeminiModels', () => {
     assert.ok(Array.isArray(res.body.models));
 
     const names = res.body.models.map((m) => m.name);
+    assert.ok(names.includes('models/antigravity-gemini-3.8-flash-high'));
+    assert.ok(names.includes('models/antigravity-gemini-3.8-flash-medium'));
+    assert.ok(names.includes('models/antigravity-gemini-3.8-flash-low'));
     assert.ok(names.includes('models/antigravity-gemini-3.7-flash-high'));
     assert.ok(names.includes('models/antigravity-gemini-3.7-flash-medium'));
     assert.ok(names.includes('models/antigravity-gemini-3.7-flash-low'));

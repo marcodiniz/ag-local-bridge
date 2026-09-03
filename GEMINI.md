@@ -148,7 +148,7 @@ When multiple sidecars are available (swarm mode), round-robins across them.
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
 - Timeout: **15 minutes** (LLM inference can be very slow)
-- Model enum values: `MODEL_PLACEHOLDER_M298` (Gemini 3.7 Flash High), `MODEL_PLACEHOLDER_M299` (Gemini 3.7 Flash Medium), `MODEL_PLACEHOLDER_M300` (Gemini 3.7 Flash Low), `MODEL_PLACEHOLDER_M71` (Gemini 3.6 Flash High), `MODEL_PLACEHOLDER_M72` (Gemini 3.6 Flash Medium), `MODEL_PLACEHOLDER_M73` (Gemini 3.6 Flash Low), `MODEL_PLACEHOLDER_M84` (Gemini 3.5 Flash High), `MODEL_PLACEHOLDER_M20` (Gemini 3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (Gemini 3.5 Flash Low), `MODEL_PLACEHOLDER_M18` (Gemini 3 Flash), `MODEL_PLACEHOLDER_M16` (Gemini 3.1 Pro High), `MODEL_PLACEHOLDER_M36` (Gemini 3.1 Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet 4.6), `MODEL_PLACEHOLDER_M26` (Opus 4.6), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
+- Model enum values: `MODEL_PLACEHOLDER_M318` (Gemini 3.8 Flash High), `MODEL_PLACEHOLDER_M319` (Gemini 3.8 Flash Medium), `MODEL_PLACEHOLDER_M320` (Gemini 3.8 Flash Low), `MODEL_PLACEHOLDER_M298` (Gemini 3.7 Flash High), `MODEL_PLACEHOLDER_M299` (Gemini 3.7 Flash Medium), `MODEL_PLACEHOLDER_M300` (Gemini 3.7 Flash Low), `MODEL_PLACEHOLDER_M71` (Gemini 3.6 Flash High), `MODEL_PLACEHOLDER_M72` (Gemini 3.6 Flash Medium), `MODEL_PLACEHOLDER_M73` (Gemini 3.6 Flash Low), `MODEL_PLACEHOLDER_M84` (Gemini 3.5 Flash High), `MODEL_PLACEHOLDER_M20` (Gemini 3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (Gemini 3.5 Flash Low), `MODEL_PLACEHOLDER_M18` (Gemini 3 Flash), `MODEL_PLACEHOLDER_M16` (Gemini 3.1 Pro High), `MODEL_PLACEHOLDER_M36` (Gemini 3.1 Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet 4.6), `MODEL_PLACEHOLDER_M26` (Opus 4.6), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
 - Dynamic discovery: The authoritative label ↔ enum-name table is queried live from the sidecar via the `GetCascadeModelConfigData` RPC.
 - **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
 
@@ -253,6 +253,15 @@ and short-form aliases (hidden from model list) for compatibility with other too
 
 | Short alias                    | Full ID                                | Enum value |
 | ------------------------------ | -------------------------------------- | ---------- |
+| `gemini-3.8-flash-high`        | `antigravity-gemini-3.8-flash-high`    | 1318       |
+| `gemini-3.8-flash-medium`      | `antigravity-gemini-3.8-flash-medium`  | 1319       |
+| `gemini-3.8-flash-low`         | `antigravity-gemini-3.8-flash-low`     | 1320       |
+| `gemini-3.8-flash`             | `antigravity-gemini-3.8-flash-high`    | 1318       |
+| `gemini-3.8`                   | `antigravity-gemini-3.8-flash-high`    | 1318       |
+| `gemini-3.8-thinking`          | `antigravity-gemini-3.8-flash-high`    | 1318       |
+| `gemini-3.8-flash-thinking`    | `antigravity-gemini-3.8-flash-high`    | 1318       |
+| `antigravity-gemini-3.8`       | `antigravity-gemini-3.8-flash-high`    | 1318       |
+| `antigravity-gemini-3.8-flash` | `antigravity-gemini-3.8-flash-high`    | 1318       |
 | `gemini-3.7-flash-high`        | `antigravity-gemini-3.7-flash-high`    | 1298       |
 | `gemini-3.7-flash-medium`      | `antigravity-gemini-3.7-flash-medium`  | 1299       |
 | `gemini-3.7-flash-low`         | `antigravity-gemini-3.7-flash-low`     | 1300       |

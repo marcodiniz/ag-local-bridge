@@ -82,4 +82,28 @@ describe('Streaming Mode Decision Logic', () => {
       assert.equal(result, false);
     });
   });
+
+  describe('Stream Chunk Formatting', () => {
+    it('formats OpenAI stream chunk with delta content', () => {
+      const { buildStreamChunk } = require('../src/utils');
+      const chunk = buildStreamChunk('chatcmpl-1', 'antigravity-claude-opus-4-6-thinking', 'Hello world');
+      assert.equal(chunk.choices[0].delta.role, 'assistant');
+      assert.equal(chunk.choices[0].delta.content, 'Hello world');
+      assert.equal(chunk.choices[0].delta.reasoning_content, undefined);
+    });
+
+    it('formats OpenAI stream chunk with reasoning content', () => {
+      const { buildStreamChunk } = require('../src/utils');
+      const chunk = buildStreamChunk(
+        'chatcmpl-1',
+        'antigravity-claude-opus-4-6-thinking',
+        null,
+        null,
+        'Thinking step...',
+      );
+      assert.equal(chunk.choices[0].delta.role, 'assistant');
+      assert.equal(chunk.choices[0].delta.content, undefined);
+      assert.equal(chunk.choices[0].delta.reasoning_content, 'Thinking step...');
+    });
+  });
 });

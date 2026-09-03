@@ -72,7 +72,7 @@ function geminiToolsToOpenAi(tools) {
 // Gemini response builders
 // ─────────────────────────────────────────────
 
-function buildGeminiResponse(text, toolCalls, modelKey) {
+function buildGeminiResponse(text, toolCalls, modelKey, thought = false) {
   const parts = [];
 
   if (toolCalls && toolCalls.length > 0) {
@@ -86,7 +86,7 @@ function buildGeminiResponse(text, toolCalls, modelKey) {
       parts.push({ functionCall: { name: tc.function.name, args } });
     }
   } else if (text) {
-    parts.push({ text });
+    parts.push(thought ? { text, thought: true } : { text });
   }
 
   return {
@@ -201,11 +201,18 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
 
       const stream = callSidecarChatStream(ctx, openAiMessages, resolved.value, workspaceDir, workspaceUri, images);
 
-      for await (const delta of stream) {
-        if (delta) {
-          const chunk = buildGeminiResponse(delta, null, resolved.key);
-          res.write((isFirst ? '' : ',\n') + JSON.stringify(chunk));
-          isFirst = false;
+      for await (const chunk of stream) {
+        if (chunk) {
+          if (chunk.reasoning) {
+            const resp = buildGeminiResponse(chunk.reasoning, null, resolved.key, true);
+            res.write((isFirst ? '' : ',\n') + JSON.stringify(resp));
+            isFirst = false;
+          }
+          if (chunk.delta) {
+            const resp = buildGeminiResponse(chunk.delta, null, resolved.key, false);
+            res.write((isFirst ? '' : ',\n') + JSON.stringify(resp));
+            isFirst = false;
+          }
         }
       }
       res.write('\n]\n');

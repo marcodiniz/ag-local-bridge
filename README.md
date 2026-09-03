@@ -36,6 +36,9 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 | -------------------------------------- | --------------------------------------------- |
 | `antigravity-claude-sonnet-4-6`        | Claude Sonnet 4.6 with Thinking **(default)** |
 | `antigravity-claude-opus-4-6-thinking` | Claude Opus 4.6 with Thinking                 |
+| `antigravity-gemini-3.8-flash-high`    | Gemini 3.8 Flash — High thinking              |
+| `antigravity-gemini-3.8-flash-medium`  | Gemini 3.8 Flash — Medium thinking            |
+| `antigravity-gemini-3.8-flash-low`     | Gemini 3.8 Flash — Low thinking               |
 | `antigravity-gemini-3.7-flash-high`    | Gemini 3.7 Flash — High thinking              |
 | `antigravity-gemini-3.7-flash-medium`  | Gemini 3.7 Flash — Medium thinking            |
 | `antigravity-gemini-3.7-flash-low`     | Gemini 3.7 Flash — Low thinking               |
@@ -50,7 +53,7 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 | `antigravity-gemini-3.1-pro-low`       | Gemini 3.1 Pro — Low thinking                 |
 | `antigravity-gpt-oss-120b`             | GPT-OSS 120B Medium                           |
 
-> **Short aliases**: All models can also be referenced with intuitive short names like `gemini-3.7`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
+> **Short aliases**: All models can also be referenced with intuitive short names like `gemini-3.8`, `gemini-3.8-flash`, `gemini-3.7`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
 
 ## Installation
 

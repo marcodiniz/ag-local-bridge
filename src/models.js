@@ -6,6 +6,30 @@
 
 const MODEL_MAP = {
   // Antigravity models (PLACEHOLDER_M enum values, 1000+ range)
+  'antigravity-gemini-3.8-flash-high': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
+  'antigravity-gemini-3.8-flash-medium': {
+    value: 1319,
+    modelEnum: 'MODEL_PLACEHOLDER_M319',
+    name: 'Gemini 3.8 Flash (Medium)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
+  'antigravity-gemini-3.8-flash-low': {
+    value: 1320,
+    modelEnum: 'MODEL_PLACEHOLDER_M320',
+    name: 'Gemini 3.8 Flash (Low)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+  },
   'antigravity-gemini-3.7-flash-high': {
     value: 1298,
     modelEnum: 'MODEL_PLACEHOLDER_M298',
@@ -137,6 +161,87 @@ const MODEL_MAP = {
     hidden: true,
   },
   // Short-form aliases (without 'antigravity-' prefix) — compatible with other tools / lbjlaq naming
+  'gemini-3.8-flash-high': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.8-flash-medium': {
+    value: 1319,
+    modelEnum: 'MODEL_PLACEHOLDER_M319',
+    name: 'Gemini 3.8 Flash (Medium)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.8-flash-low': {
+    value: 1320,
+    modelEnum: 'MODEL_PLACEHOLDER_M320',
+    name: 'Gemini 3.8 Flash (Low)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.8-flash': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.8': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.8-thinking': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'gemini-3.8-flash-thinking': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'antigravity-gemini-3.8': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
+  'antigravity-gemini-3.8-flash': {
+    value: 1318,
+    modelEnum: 'MODEL_PLACEHOLDER_M318',
+    name: 'Gemini 3.8 Flash (High)',
+    owned_by: 'google',
+    context: 1048576,
+    output: 65536,
+    hidden: true,
+  },
   'gemini-3.7-flash-high': {
     value: 1298,
     modelEnum: 'MODEL_PLACEHOLDER_M298',
@@ -392,6 +497,9 @@ const MODEL_MAP = {
 };
 
 const VALUE_TO_MODEL_ENUM = {
+  1318: 'MODEL_PLACEHOLDER_M318',
+  1319: 'MODEL_PLACEHOLDER_M319',
+  1320: 'MODEL_PLACEHOLDER_M320',
   1298: 'MODEL_PLACEHOLDER_M298',
   1299: 'MODEL_PLACEHOLDER_M299',
   1300: 'MODEL_PLACEHOLDER_M300',
@@ -411,6 +519,9 @@ const VALUE_TO_MODEL_ENUM = {
 };
 
 const MODEL_ENUM_TO_VALUE = {
+  MODEL_PLACEHOLDER_M318: 1318,
+  MODEL_PLACEHOLDER_M319: 1319,
+  MODEL_PLACEHOLDER_M320: 1320,
   MODEL_PLACEHOLDER_M298: 1298,
   MODEL_PLACEHOLDER_M299: 1299,
   MODEL_PLACEHOLDER_M300: 1300,

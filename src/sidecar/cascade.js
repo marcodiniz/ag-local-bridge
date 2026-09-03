@@ -181,7 +181,7 @@ async function callSidecarChat(
   images = [],
 ) {
   const MAX_RETRIES = 3;
-  const RETRY_DELAY_MS = 10000;
+  const RETRY_DELAY_MS = 2000;
   let lastUpstreamError = null;
   let session = null;
 

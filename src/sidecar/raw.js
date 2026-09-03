@@ -10,6 +10,8 @@ const { discoverSwarm, getNextSwarmMember, invalidateSwarmCache, markSwarmMember
 const { MODEL_ENUM_TO_VALUE } = require('../models');
 
 const RAW_MODEL_FALLBACKS = {
+  MODEL_PLACEHOLDER_M319: 'MODEL_PLACEHOLDER_M318', // 3.8 Flash Medium -> 3.8 Flash High
+  MODEL_PLACEHOLDER_M320: 'MODEL_PLACEHOLDER_M318', // 3.8 Flash Low -> 3.8 Flash High
   MODEL_PLACEHOLDER_M299: 'MODEL_PLACEHOLDER_M298', // Flash Medium -> Flash High
   MODEL_PLACEHOLDER_M300: 'MODEL_PLACEHOLDER_M298', // Flash Low -> Flash High
   MODEL_PLACEHOLDER_M72: 'MODEL_PLACEHOLDER_M71', // 3.6 Medium -> 3.6 High
@@ -49,7 +51,15 @@ function formatMessagesAsPrompt(messages, tools) {
     parts.push('</thought>');
     parts.push('<tool_call>{"name": "read_file", "arguments": {"path": "src/index.ts"}}</tool_call>\n');
     parts.push('The user will execute the tools and return the results as [Tool Result: <tool_name>].');
-    parts.push('CRITICAL: Do NOT simulate tool execution. Stop and wait for the real results to be returned.\n');
+    parts.push('CRITICAL RULES:');
+    parts.push('1. Put all your planning and reasoning inside <thought>...</thought> tags.');
+    parts.push(
+      '2. If you need to inspect files, search, or investigate, you MUST emit the <tool_call> immediately. Never output a conversational promise or preamble (e.g. "I will search and read the files...") without including the <tool_call>.',
+    );
+    parts.push(
+      '3. Only output plain text outside <thought> when you have finished your investigation and are providing your final answer/verdict.',
+    );
+    parts.push('4. Do NOT simulate tool execution. Stop and wait for the real results to be returned.\n');
     for (const tool of tools) {
       if (tool.type === 'function' && tool.function) {
         const fn = tool.function;
@@ -74,7 +84,10 @@ function formatMessagesAsPrompt(messages, tools) {
     } else if (role === 'user') {
       parts.push(`[User]\n${content}\n`);
     } else if (role === 'assistant') {
-      const thoughtBlock = (msg.reasoning_content || msg.reasoning) ? `<thought>\n${msg.reasoning_content || msg.reasoning}\n</thought>\n` : '';
+      const thoughtBlock =
+        msg.reasoning_content || msg.reasoning
+          ? `<thought>\n${msg.reasoning_content || msg.reasoning}\n</thought>\n`
+          : '';
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         // Format assistant tool calls so the model sees the conversation flow
         const toolCallTexts = msg.tool_calls.map((tc) => {
@@ -231,7 +244,7 @@ let inferenceStartMutex = Promise.resolve();
 
 /**
  * Serialize GetModelResponse calls per sidecar PID: only ONE runs at a time per sidecar,
- * with a 2-second cooldown between consecutive calls. This prevents the sidecar
+ * with a 100ms cooldown between consecutive calls. This prevents the sidecar
  * from returning RESOURCE_EXHAUSTED under parallel request spikes, while still
  * allowing concurrent execution across different sidecars in swarm mode.
  */
@@ -255,7 +268,7 @@ function enqueueInferenceForMember(pid, fn) {
       } catch (err) {
         reject(err);
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 100));
     })
     .catch(() => {});
 
@@ -482,7 +495,7 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
  */
 async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, timeoutMs) {
   const MAX_RETRIES = 2;
-  const RETRY_DELAY_MS = 5000;
+  const RETRY_DELAY_MS = 1000;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const mainCsrf = info.csrfTokens ? info.csrfTokens[0] : null;

@@ -260,25 +260,61 @@ async function handleAnthropicMessages(ctx, req, res) {
       log(ctx, `🌊 [Anthropic] Streaming via Cascade trajectory delta polling (${resolved.key})...`);
       initiateStream();
 
-      writeAnthropicEvent(res, 'content_block_start', {
-        type: 'content_block_start',
-        index: 0,
-        content_block: { type: 'text', text: '' },
-      });
+      let thinkingBlockStarted = false;
+      let textBlockStarted = false;
+      let blockIndex = 0;
 
       const stream = callSidecarChatStream(ctx, openAiMessages, resolved.value, workspaceDir, workspaceUri, images);
 
-      for await (const delta of stream) {
-        if (delta) {
-          writeAnthropicEvent(res, 'content_block_delta', {
-            type: 'content_block_delta',
-            index: 0,
-            delta: { type: 'text_delta', text: delta },
-          });
+      for await (const chunk of stream) {
+        if (chunk) {
+          if (chunk.reasoning) {
+            if (!thinkingBlockStarted) {
+              writeAnthropicEvent(res, 'content_block_start', {
+                type: 'content_block_start',
+                index: blockIndex,
+                content_block: { type: 'thinking', thinking: '' },
+              });
+              thinkingBlockStarted = true;
+            }
+            writeAnthropicEvent(res, 'content_block_delta', {
+              type: 'content_block_delta',
+              index: blockIndex,
+              delta: { type: 'thinking_delta', thinking: chunk.reasoning },
+            });
+          }
+          if (chunk.delta) {
+            if (thinkingBlockStarted && !textBlockStarted) {
+              writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
+              blockIndex++;
+            }
+            if (!textBlockStarted) {
+              writeAnthropicEvent(res, 'content_block_start', {
+                type: 'content_block_start',
+                index: blockIndex,
+                content_block: { type: 'text', text: '' },
+              });
+              textBlockStarted = true;
+            }
+            writeAnthropicEvent(res, 'content_block_delta', {
+              type: 'content_block_delta',
+              index: blockIndex,
+              delta: { type: 'text_delta', text: chunk.delta },
+            });
+          }
         }
       }
 
-      writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: 0 });
+      if (thinkingBlockStarted || textBlockStarted) {
+        writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
+      } else {
+        writeAnthropicEvent(res, 'content_block_start', {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: '' },
+        });
+        writeAnthropicEvent(res, 'content_block_stop', { type: 'content_block_stop', index: 0 });
+      }
       writeAnthropicEvent(res, 'message_delta', {
         type: 'message_delta',
         delta: { stop_reason: 'end_turn', stop_sequence: null },
