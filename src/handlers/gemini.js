@@ -249,36 +249,41 @@ async function handleGeminiGenerateContent(ctx, req, res, modelFromPath) {
     }
   } catch (err) {
     log(ctx, `⚠️ [Gemini] Raw inference failed: ${err.message}`);
+    // Oversized prompts must not be retried as-is.
+    const isTooLarge =
+      (err && (err.statusCode === 413 || err.code === 'context_length_exceeded')) ||
+      (err.message || '').includes('context_length_exceeded');
     const isRateLimit =
-      err.message.includes('capacity') ||
-      err.message.includes('429') ||
-      err.message.includes('RESOURCE_EXHAUSTED') ||
-      err.message.toLowerCase().includes('sse read timed out') ||
-      err.message.includes('H2 connect') ||
-      err.message.includes('H2 timeout') ||
-      err.message.includes('Sidecar not discovered') ||
-      err.message.includes('No reachable LS port') ||
-      err.message.includes('empty content') ||
-      err.message.includes('HTTP 500') ||
-      err.message.includes('INTERNAL') ||
-      err.message.includes('ECONNRESET') ||
-      err.message.includes('socket hang up');
-    const status = isRateLimit ? 429 : 502;
-    const retryAfterSecs = parseRetryAfter(err.message);
+      !isTooLarge &&
+      (err.message.includes('capacity') ||
+        err.message.includes('429') ||
+        err.message.includes('RESOURCE_EXHAUSTED') ||
+        err.message.toLowerCase().includes('sse read timed out') ||
+        err.message.includes('H2 connect') ||
+        err.message.includes('H2 timeout') ||
+        err.message.includes('Sidecar not discovered') ||
+        err.message.includes('No reachable LS port') ||
+        err.message.includes('empty content') ||
+        err.message.includes('HTTP 500') ||
+        err.message.includes('INTERNAL') ||
+        err.message.includes('ECONNRESET') ||
+        err.message.includes('socket hang up'));
+    const status = isTooLarge ? 413 : isRateLimit ? 429 : 502;
+    const retryAfterSecs = isTooLarge ? 0 : parseRetryAfter(err.message);
     log(
       ctx,
-      `🛑 [Gemini][${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
+      `🛑 [Gemini][${isTooLarge ? 'invalid_request→413' : isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}: ${err.message.substring(0, 120)}`,
     );
     const cleanMessage = extractProviderError(err.message);
     const errBody = {
       error: {
         code: status,
         message: `Upstream error: ${cleanMessage}`,
-        status: isRateLimit ? 'RESOURCE_EXHAUSTED' : 'INTERNAL',
+        status: isTooLarge ? 'INVALID_ARGUMENT' : isRateLimit ? 'RESOURCE_EXHAUSTED' : 'INTERNAL',
       },
     };
     if (!res.headersSent) {
-      res.setHeader('Retry-After', String(retryAfterSecs));
+      if (retryAfterSecs) res.setHeader('Retry-After', String(retryAfterSecs));
       sendJson(res, status, errBody);
     }
   } finally {

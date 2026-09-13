@@ -9,6 +9,14 @@ const { discoverSwarm, getNextSwarmMember, invalidateSwarmCache, markSwarmMember
 
 const { MODEL_ENUM_TO_VALUE } = require('../models');
 
+// Fail-fast ceiling for a single formatted raw prompt. Well below the sidecar
+// OOM range (~600k-700k chars, see sanitize.js) — exceeding it means history
+// must be compacted client-side, not retried as-is.
+const MAX_RAW_PROMPT_CHARS = 400000;
+// Older (non-newest-exchange) tool results are trimmed to this size during
+// raw budgeting. The newest complete tool exchange is always preserved intact.
+const OLDER_TOOL_RESULT_CHARS = 4000;
+
 const RAW_MODEL_FALLBACKS = {
   MODEL_PLACEHOLDER_M319: 'MODEL_PLACEHOLDER_M318', // 3.8 Flash Medium -> 3.8 Flash High
   MODEL_PLACEHOLDER_M320: 'MODEL_PLACEHOLDER_M318', // 3.8 Flash Low -> 3.8 Flash High
@@ -66,7 +74,10 @@ function formatMessagesAsPrompt(messages, tools) {
         parts.push(`## ${fn.name}`);
         if (fn.description) parts.push(fn.description);
         if (fn.parameters) {
-          parts.push('Parameters: ' + JSON.stringify(fn.parameters, null, 2));
+          // Compact single-line JSON: the model needs complete schemas
+          // (required fields, enums, nesting), but not pretty-print whitespace.
+          const schemaText = typeof fn.parameters === 'string' ? fn.parameters : JSON.stringify(fn.parameters);
+          parts.push('Parameters: ' + schemaText);
         }
         parts.push('');
       }
@@ -105,6 +116,100 @@ function formatMessagesAsPrompt(messages, tools) {
   }
 
   return parts.join('\n');
+}
+
+/**
+ * Throw when a formatted raw prompt exceeds the fail-fast ceiling.
+ * Carries `code`/`statusCode` so HTTP handlers map it to 413 (not 429:
+ * retrying the same payload would loop).
+ */
+function assertRawPromptBudget(prompt, maxChars = MAX_RAW_PROMPT_CHARS) {
+  if (prompt.length > maxChars) {
+    const err = new Error(
+      `context_length_exceeded: raw prompt ${prompt.length} chars exceeds budget of ${maxChars} chars — compact history or reduce tools and retry with a smaller payload`,
+    );
+    err.code = 'context_length_exceeded';
+    err.statusCode = 413;
+    throw err;
+  }
+  return prompt;
+}
+
+/**
+ * Component sizes for logging (no second prompt build by the caller:
+ * pass the already-built prompt plus the inputs it was built from).
+ */
+function getRawPromptStats(messages, tools, prompt) {
+  let toolResultChars = 0;
+  let historyChars = 0;
+  for (const msg of messages || []) {
+    const content = extractText(msg.content);
+    const len = typeof content === 'string' ? content.length : 0;
+    if (msg.role === 'tool') toolResultChars += len;
+    else historyChars += len;
+  }
+  let schemaChars = 0;
+  for (const tool of tools || []) {
+    const fn = tool.function || {};
+    if (fn.description) schemaChars += String(fn.description).length;
+    if (fn.parameters) {
+      schemaChars += typeof fn.parameters === 'string' ? fn.parameters.length : JSON.stringify(fn.parameters).length;
+    }
+  }
+  return { totalChars: prompt.length, schemaChars, toolResultChars, historyChars, toolCount: tools ? tools.length : 0 };
+}
+
+/**
+ * Budget messages for raw inference WITHOUT dropping evidence silently:
+ * - system/developer messages: always kept
+ * - latest user message: always kept
+ * - newest complete tool exchange (last assistant tool_calls + following
+ *   tool results): always preserved INTACT (may be large — that is the
+ *   evidence the next step reasons over)
+ * - older tool results: trimmed to OLDER_TOOL_RESULT_CHARS with a marker
+ *
+ * Never drops messages. If the formatted prompt is still over budget after
+ * trimming, the caller fails fast via assertRawPromptBudget (413) instead of
+ * sending a payload the sidecar will stall on.
+ *
+ * @returns {{ messages: Array, truncatedCount: number }}
+ */
+function budgetMessagesForRaw(messages, tools, opts = {}) {
+  const olderToolResultChars =
+    typeof opts.olderToolResultChars === 'number' ? opts.olderToolResultChars : OLDER_TOOL_RESULT_CHARS;
+  if (!Array.isArray(messages) || messages.length === 0) return { messages, truncatedCount: 0 };
+
+  // Find the newest complete tool exchange: last assistant with tool_calls.
+  let newestExchangeStart = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg && msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      newestExchangeStart = i;
+      break;
+    }
+  }
+
+  let truncatedCount = 0;
+  const budgeted = messages.map((msg, idx) => {
+    if (!msg || msg.role !== 'tool' || typeof msg.content !== 'string') return msg;
+    // Preserve tool results belonging to the newest exchange intact.
+    if (newestExchangeStart !== -1 && idx > newestExchangeStart) return msg;
+    if (msg.content.length <= olderToolResultChars) return msg;
+    truncatedCount++;
+    return {
+      ...msg,
+      content: msg.content.substring(0, olderToolResultChars) + '\n... [older tool result truncated]',
+    };
+  });
+
+  return { messages: budgeted, truncatedCount };
+}
+
+/** Throw if the client disconnected before/while we were queued. */
+function throwIfAborted(signal) {
+  if (signal && signal.aborted) {
+    throw new Error('Client disconnected — aborting raw inference');
+  }
 }
 
 /**
@@ -248,7 +353,8 @@ let inferenceStartMutex = Promise.resolve();
  * from returning RESOURCE_EXHAUSTED under parallel request spikes, while still
  * allowing concurrent execution across different sidecars in swarm mode.
  */
-function enqueueInferenceForMember(pid, fn) {
+function enqueueInferenceForMember(pid, fn, ctx) {
+  const queuedAt = Date.now();
   let queue = swarmQueues.get(pid);
   if (!queue) {
     queue = Promise.resolve();
@@ -262,11 +368,15 @@ function enqueueInferenceForMember(pid, fn) {
 
   const nextQueue = queue
     .then(async () => {
+      const startedAt = Date.now();
+      if (ctx) log(ctx, `Raw RPC start PID=${pid} queueWaitMs=${startedAt - queuedAt}`);
       try {
         const res = await fn();
         resolve(res);
       } catch (err) {
         reject(err);
+      } finally {
+        if (ctx) log(ctx, `Raw RPC settled PID=${pid} rpcDurationMs=${Date.now() - startedAt}`);
       }
       await new Promise((r) => setTimeout(r, 100));
     })
@@ -316,7 +426,8 @@ function clearRawEndpoint(ctx) {
  * @param {Array} images - Array of extracted image objects
  * @returns {{ content: string|null, toolCalls: Array|null }}
  */
-async function callRawInference(ctx, messages, modelEnum, tools = null, images = []) {
+async function callRawInference(ctx, messages, modelEnum, tools = null, images = [], opts = {}) {
+  throwIfAborted(opts.signal);
   if (images && images.length > 0) {
     log(ctx, `🖼️ Images detected! Raw inference does not support vision. Routing to Cascade API...`);
     const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum];
@@ -349,33 +460,49 @@ async function callRawInference(ctx, messages, modelEnum, tools = null, images =
     throw new Error('Sidecar discovered but no CSRF tokens available');
   }
 
+  // Budget history: trim older tool results, preserve the newest complete
+  // tool exchange intact. Never drops messages — over-budget fails fast (413).
+  const budgeted = budgetMessagesForRaw(messages, tools, {
+    olderToolResultChars: ctx.RAW_OLDER_TOOL_RESULT_CHARS,
+  });
+  const effectiveMessages = budgeted.messages;
+
   // Format the prompt
-  const prompt = formatMessagesAsPrompt(messages, tools);
+  const prompt = formatMessagesAsPrompt(effectiveMessages, tools);
 
-  log(ctx, `🧠 Raw inference: ${prompt.length} chars, model=${modelEnum}, tools=${tools ? tools.length : 0}`);
+  const stats = getRawPromptStats(effectiveMessages, tools, prompt);
+  log(
+    ctx,
+    `🧠 Raw inference: ${stats.totalChars} chars (schemas=${stats.schemaChars}, results=${stats.toolResultChars}, history=${stats.historyChars}, truncated=${budgeted.truncatedCount}), model=${modelEnum}, tools=${stats.toolCount}`,
+  );
 
-  // Call GetModelResponse with an extended timeout.
-  const INFERENCE_TIMEOUT_MS = 900000; // 15 minutes
+  // Fail fast instead of stalling the sidecar on an oversized payload.
+  assertRawPromptBudget(prompt, ctx.MAX_RAW_PROMPT_CHARS || MAX_RAW_PROMPT_CHARS);
+
+  // Configurable timeout (default 120s): a hung unary call surfaces as H2
+  // timeout → 429 so the client can compact/retry, instead of a 15min hang.
+  const INFERENCE_TIMEOUT_MS = ctx.RAW_INFERENCE_TIMEOUT_MS || 120000;
 
   // ── Swarm round-robin path ────────────────────────────────────────────
   if (useSwarm) {
-    return _callRawInferenceSwarm(ctx, swarmMembers, prompt, modelEnum, tools, INFERENCE_TIMEOUT_MS);
+    return _callRawInferenceSwarm(ctx, swarmMembers, prompt, modelEnum, tools, INFERENCE_TIMEOUT_MS, opts);
   }
 
   // ── Single-sidecar path (original logic) ──────────────────────────────
-  return _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, INFERENCE_TIMEOUT_MS);
+  return _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, INFERENCE_TIMEOUT_MS, opts);
 }
 
 /**
  * Swarm round-robin inference: try each member in turn until one succeeds.
  * On RESOURCE_EXHAUSTED, automatically rotate to the next member.
  */
-async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, timeoutMs) {
+async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, timeoutMs, opts = {}) {
   const totalMembers = members.length;
   let lastError = null;
 
   // Try every member in the swarm (starting from the round-robin position)
   for (let i = 0; i < totalMembers; i++) {
+    throwIfAborted(opts.signal);
     const numericModelValue = MODEL_ENUM_TO_VALUE[modelEnum] || 1035;
     const member = getNextSwarmMember(members, numericModelValue);
 
@@ -404,21 +531,26 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
 
       log(ctx, `🐝 Trying sidecar PID=${member.pid} port=${member.port} (${i + 1}/${totalMembers})`);
 
-      const result = await enqueueInferenceForMember(member.pid, () =>
-        makeH2JsonCall(
-          member.port,
-          member.csrf,
-          member.certPath,
-          'GetModelResponse',
-          { prompt, model: modelEnum },
-          1,
-          timeoutMs,
-        ),
+      const rpcStart = Date.now();
+      const result = await enqueueInferenceForMember(
+        member.pid,
+        () =>
+          makeH2JsonCall(
+            member.port,
+            member.csrf,
+            member.certPath,
+            'GetModelResponse',
+            { prompt, model: modelEnum },
+            1,
+            timeoutMs,
+          ),
+        ctx,
       );
+      const rpcSecs = ((Date.now() - rpcStart) / 1000).toFixed(1);
 
       const responseText = (result && result.response) || '';
       verboseLog(ctx, `🧠 Raw response dump (${responseText.length} chars)`, responseText);
-      log(ctx, `🧠 Raw response: ${responseText.length} chars (from PID=${member.pid})`);
+      log(ctx, `🧠 Raw response: ${responseText.length} chars in ${rpcSecs}s (from PID=${member.pid})`);
 
       // Check for quota exhaustion — flag specific bucket and rotate
       if (
@@ -455,6 +587,8 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
       return parseToolCalls(responseText);
     } catch (err) {
       const errMsg = err.message || '';
+      // Client went away — never rotate/retry on another member.
+      if (errMsg.includes('Client disconnected')) throw err;
       log(ctx, `⚠️ 🐝 Sidecar PID=${member.pid} failed: ${errMsg.substring(0, 100)} — rotating...`);
       lastError = err;
 
@@ -493,11 +627,12 @@ async function _callRawInferenceSwarm(ctx, members, prompt, modelEnum, tools, ti
 /**
  * Original single-sidecar inference path (unchanged from before).
  */
-async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, timeoutMs) {
+async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, timeoutMs, opts = {}) {
   const MAX_RETRIES = 2;
   const RETRY_DELAY_MS = 1000;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    throwIfAborted(opts.signal);
     const mainCsrf = info.csrfTokens ? info.csrfTokens[0] : null;
     if (!mainCsrf) {
       throw new Error('Sidecar discovered but no CSRF tokens available');
@@ -539,13 +674,21 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
       let result;
       let lastError = null;
       for (const port of portsToTry) {
+        throwIfAborted(opts.signal);
         try {
-          result = await enqueueInferenceForMember(info.pid, () =>
-            callGetModelResponseOnPort(ctx, info, mainCsrf, port, prompt, activeModelEnum, timeoutMs),
+          const rpcStart = Date.now();
+          result = await enqueueInferenceForMember(
+            info.pid,
+            () => callGetModelResponseOnPort(ctx, info, mainCsrf, port, prompt, activeModelEnum, timeoutMs),
+            ctx,
           );
+          const rpcSecs = ((Date.now() - rpcStart) / 1000).toFixed(1);
+          log(ctx, `🧠 Raw RPC done in ${rpcSecs}s on port ${port} (attempt ${attempt + 1})`);
           ctx.rawInferenceEndpoint = { key: endpointKey, port, lastUsed: Date.now() };
           break;
         } catch (err) {
+          log(ctx, `Raw RPC failed port=${port}: ${err.message}`);
+          if (err.message.includes('H2 timeout')) throw err;
           lastError = err;
           if (cached && cached.port === port) clearRawEndpoint(ctx);
           const msg = String(err && err.message ? err.message : err);
@@ -619,6 +762,8 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
       return parseToolCalls(responseText);
     } catch (err) {
       const errMsg = err.message || '';
+      // Client went away — never retry.
+      if (errMsg.includes('Client disconnected')) throw err;
       const isRetryable =
         errMsg.includes('RESOURCE_EXHAUSTED') ||
         errMsg.includes('401') ||
@@ -646,4 +791,14 @@ async function _callRawInferenceSingle(ctx, info, prompt, modelEnum, tools, time
   }
 }
 
-module.exports = { callRawInference, formatMessagesAsPrompt, parseToolCalls };
+module.exports = {
+  callRawInference,
+  formatMessagesAsPrompt,
+  parseToolCalls,
+  budgetMessagesForRaw,
+  getRawPromptStats,
+  assertRawPromptBudget,
+  throwIfAborted,
+  MAX_RAW_PROMPT_CHARS,
+  OLDER_TOOL_RESULT_CHARS,
+};

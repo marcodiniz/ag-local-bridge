@@ -126,6 +126,17 @@ async function handleChatCompletions(ctx, req, res) {
   ctx.chatRequestsInFlight++;
   log(ctx, `📡 Requests in flight: ${ctx.chatRequestsInFlight}`);
 
+  // Abort flag: set when the HTTP client disconnects before we finish.
+  // Passed down to raw inference so queued retries fail fast instead of
+  // holding the per-PID queue after nobody is listening.
+  const abortState = { aborted: false };
+  // `req` may be a mock in tests — guard the listener.
+  if (res && typeof res.on === 'function') {
+    res.on('close', () => {
+      if (!res.writableEnded) abortState.aborted = true;
+    });
+  }
+
   let keepAliveTimer = null;
   let preStreamTimer = null;
   // Shared mutable flag — must be accessed via closure, never passed by value.
@@ -169,6 +180,7 @@ async function handleChatCompletions(ctx, req, res) {
       workspaceDir,
       workspaceUri,
       payload,
+      abortState,
     );
   } finally {
     if (keepAliveTimer) clearInterval(keepAliveTimer);
@@ -190,6 +202,7 @@ async function _handleChatCompletionsInner(
   workspaceDir,
   workspaceUri,
   payload,
+  abortState = null,
 ) {
   // Extract media from OpenAI-format messages (base64 data URLs, remote URLs, file URIs).
   // Raw GetModelResponse only accepts text, so media-bearing requests use Cascade.
@@ -255,7 +268,7 @@ async function _handleChatCompletionsInner(
 
   try {
     log(ctx, `🧠 Trying raw inference (${modelEnum})...`);
-    const raw = await callRawInference(ctx, messages, modelEnum, tools, media);
+    const raw = await callRawInference(ctx, messages, modelEnum, tools, media, { signal: abortState });
     if (raw && (raw.content || raw.toolCalls || raw.reasoning)) {
       const text = raw.content || '';
       log(
@@ -296,30 +309,16 @@ async function _handleChatCompletionsInner(
     throw new Error('Raw inference returned empty content or no tool calls');
   } catch (err) {
     log(ctx, `⚠️ Raw inference failed: ${err.message}`);
+    if (res.destroyed) return;
 
-    // Enforce 429 for rate limit / capacity errors, otherwise 502 for general upstream/H2 crashes
-    const isRateLimit =
-      err.message.includes('capacity') ||
-      err.message.includes('429') ||
-      err.message.includes('RESOURCE_EXHAUSTED') ||
-      err.message.toLowerCase().includes('sse read timed out') ||
-      err.message.includes('H2 connect') ||
-      err.message.includes('H2 timeout') ||
-      err.message.includes('Sidecar not discovered') ||
-      err.message.includes('No reachable LS port') ||
-      err.message.includes('empty content') ||
-      err.message.includes('HTTP 500') ||
-      err.message.includes('INTERNAL') ||
-      err.message.includes('ECONNRESET') ||
-      err.message.includes('socket hang up');
-    const status = isRateLimit ? 429 : 502;
-    const errType = isRateLimit ? 'rate_limit' : 'server_error';
-
-    const retryAfterSecs = parseRetryAfter(err.message);
+    // Map upstream errors to HTTP status. Oversized prompts are 413 (the
+    // client must compact, not retry as-is). Rate/capacity errors are 429.
+    // Anything else is 502.
+    const { status, errType, retryAfterSecs } = getRawHttpStatus(err);
 
     log(
       ctx,
-      `🛑 [${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
+      `🛑 [${errType}→${status}] returning ${status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}: ${err.message.substring(0, 120)}`,
     );
 
     const cleanMessage = extractProviderError(err.message);
@@ -338,11 +337,45 @@ async function _handleChatCompletionsInner(
       res.write('data: [DONE]\n\n');
       res.end();
     } else if (!res.headersSent) {
-      // Stream NOT yet committed — return a proper HTTP 429/502 status code
-      res.setHeader('Retry-After', String(retryAfterSecs));
+      // Stream NOT yet committed — return a proper HTTP status code.
+      // No Retry-After on 413: retrying the same payload would loop.
+      if (retryAfterSecs) res.setHeader('Retry-After', String(retryAfterSecs));
       sendJson(res, status, errPayload);
     }
   }
 }
 
-module.exports = { handleChatCompletions };
+/**
+ * Map a raw-inference error to an HTTP status/type.
+ * Exported for tests.
+ */
+function getRawHttpStatus(err) {
+  const message = (err && err.message) || '';
+  // ponytail: explicit contract — same payload must not be retried.
+  if (
+    (err && (err.statusCode === 413 || err.code === 'context_length_exceeded')) ||
+    message.includes('context_length_exceeded')
+  ) {
+    return { status: 413, errType: 'invalid_request', retryAfterSecs: 0 };
+  }
+  const isRateLimit =
+    message.includes('capacity') ||
+    message.includes('429') ||
+    message.includes('RESOURCE_EXHAUSTED') ||
+    message.toLowerCase().includes('sse read timed out') ||
+    message.includes('H2 connect') ||
+    message.includes('H2 timeout') ||
+    message.includes('Sidecar not discovered') ||
+    message.includes('No reachable LS port') ||
+    message.includes('empty content') ||
+    message.includes('HTTP 500') ||
+    message.includes('INTERNAL') ||
+    message.includes('ECONNRESET') ||
+    message.includes('socket hang up');
+  if (isRateLimit) {
+    return { status: 429, errType: 'rate_limit', retryAfterSecs: parseRetryAfter(message) };
+  }
+  return { status: 502, errType: 'server_error', retryAfterSecs: 0 };
+}
+
+module.exports = { handleChatCompletions, getRawHttpStatus };

@@ -36,6 +36,11 @@ function createContext() {
     MAX_CONCURRENT_REQUESTS: 3,
     RAW_INFERENCE_START_SPACING_MS: 100,
     CASCADE_POLL_INTERVAL_MS: 350,
+    // Raw GetModelResponse is unary: fail fast so clients can compact/retry
+    // instead of hanging on an oversized payload.
+    RAW_INFERENCE_TIMEOUT_MS: 120000, // 2 minutes
+    MAX_RAW_PROMPT_CHARS: 400000,
+    RAW_OLDER_TOOL_RESULT_CHARS: 4000,
 
     // Rate limiting / loop-breaking
     lastResponseTimestamp: 0,

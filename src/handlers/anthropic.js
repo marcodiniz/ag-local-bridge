@@ -444,31 +444,36 @@ async function handleAnthropicMessages(ctx, req, res) {
     }
   } catch (err) {
     log(ctx, `⚠️ [Anthropic] Raw inference failed: ${err.message}`);
+    // Oversized prompts must not be retried as-is.
+    const isTooLarge =
+      (err && (err.statusCode === 413 || err.code === 'context_length_exceeded')) ||
+      (err.message || '').includes('context_length_exceeded');
     const isRateLimit =
-      err.message.includes('capacity') ||
-      err.message.includes('429') ||
-      err.message.includes('RESOURCE_EXHAUSTED') ||
-      err.message.toLowerCase().includes('sse read timed out') ||
-      err.message.includes('H2 connect') ||
-      err.message.includes('H2 timeout') ||
-      err.message.includes('Sidecar not discovered') ||
-      err.message.includes('No reachable LS port') ||
-      err.message.includes('empty content') ||
-      err.message.includes('HTTP 500') ||
-      err.message.includes('INTERNAL') ||
-      err.message.includes('ECONNRESET') ||
-      err.message.includes('socket hang up');
-    const status = isRateLimit ? 429 : 502;
-    const errType = isRateLimit ? 'rate_limit_error' : 'api_error';
-    const retryAfterSecs = parseRetryAfter(err.message);
+      !isTooLarge &&
+      (err.message.includes('capacity') ||
+        err.message.includes('429') ||
+        err.message.includes('RESOURCE_EXHAUSTED') ||
+        err.message.toLowerCase().includes('sse read timed out') ||
+        err.message.includes('H2 connect') ||
+        err.message.includes('H2 timeout') ||
+        err.message.includes('Sidecar not discovered') ||
+        err.message.includes('No reachable LS port') ||
+        err.message.includes('empty content') ||
+        err.message.includes('HTTP 500') ||
+        err.message.includes('INTERNAL') ||
+        err.message.includes('ECONNRESET') ||
+        err.message.includes('socket hang up'));
+    const status = isTooLarge ? 413 : isRateLimit ? 429 : 502;
+    const errType = isTooLarge ? 'invalid_request_error' : isRateLimit ? 'rate_limit_error' : 'api_error';
+    const retryAfterSecs = isTooLarge ? 0 : parseRetryAfter(err.message);
     log(
       ctx,
-      `🛑 [Anthropic][${isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status} (Retry-After: ${retryAfterSecs}s): ${err.message.substring(0, 120)}`,
+      `🛑 [Anthropic][${isTooLarge ? 'invalid_request→413' : isRateLimit ? 'rate_limit→429' : 'server_error→502'}] returning ${status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}: ${err.message.substring(0, 120)}`,
     );
     const cleanMessage = extractProviderError(err.message);
     const errBody = { type: 'error', error: { type: errType, message: `Upstream error: ${cleanMessage}` } };
     if (!res.headersSent) {
-      res.setHeader('Retry-After', String(retryAfterSecs));
+      if (retryAfterSecs) res.setHeader('Retry-After', String(retryAfterSecs));
       sendJson(res, status, errBody);
     } else if (!res.writableEnded) {
       writeAnthropicEvent(res, 'error', errBody);

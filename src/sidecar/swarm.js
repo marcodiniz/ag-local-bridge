@@ -9,6 +9,7 @@ const { execFile } = require('child_process');
 const execFileAsync = promisify(execFile);
 const { log, verboseLog } = require('../utils');
 const { makeH2JsonCall } = require('./rpc');
+const { getPlatformStrategy } = require('./discovery');
 
 // ─────────────────────────────────────────────
 // Multi-Sidecar Swarm Discovery & Round-Robin
@@ -72,6 +73,27 @@ function getSwarmCooldowns() {
     if (Object.keys(result[pid]).length === 0) delete result[pid];
   }
   return result;
+}
+
+/**
+ * Candidate H2 ports from a sidecar command line, ordered by likelihood.
+ * The single-sidecar path (discovery.js) finds the working H2 port via
+ * netstat + multi-port probing; swarm previously probed only
+ * --extension_server_port, so a sidecar whose H2 lives on --server_port
+ * (or another flag) always reported 0/1 healthy. Probe all known flags.
+ * Exported for tests.
+ */
+function getSwarmCandidatePorts(commandLine) {
+  const ports = [];
+  const patterns = [/--extension_server_port\s+(\d+)/, /--server_port\s+(\d+)/, /--lsp_port[= ](\d+)/];
+  for (const re of patterns) {
+    const m = commandLine.match(re);
+    if (m) {
+      const port = parseInt(m[1], 10);
+      if (port && !ports.includes(port)) ports.push(port);
+    }
+  }
+  return ports;
 }
 
 /**
@@ -174,24 +196,34 @@ async function _discoverAllSidecars(ctx) {
     // VS Code API may not be available in test
   }
 
-  // Extract port + CSRF from each, probe health
+  // Extract ports + CSRF from each, probe every candidate port for H2 health
+  // and record the working one (extension_server_port is not always the H2 port).
   const members = [];
   for (const proc of inferenceSidecars) {
-    const portMatch = proc.commandLine.match(/--extension_server_port\s+(\d+)/);
     const csrfMatch = proc.commandLine.match(/--csrf_token\s+([a-f0-9-]+)/);
-
-    if (!portMatch || !csrfMatch) continue;
-
-    const port = parseInt(portMatch[1]);
+    if (!csrfMatch) continue;
     const csrf = csrfMatch[1];
 
-    // Quick H2 health probe
-    try {
-      await makeH2JsonCall(port, csrf, certPath, 'GetAvailableCascadePlugins', {}, 0, 2000);
-      members.push({ pid: proc.pid, port, csrf, certPath });
-    } catch {
-      verboseLog(ctx, `⚠️ Swarm probe failed for PID=${proc.pid} port=${port} — skipping`);
+    const listeningPorts = await getPlatformStrategy().strategy.findListeningPorts(proc.pid);
+    const candidatePorts = [...new Set([...listeningPorts, ...getSwarmCandidatePorts(proc.commandLine)])];
+    if (candidatePorts.length === 0) continue;
+
+    // Quick H2 health probe on each candidate port, in order
+    let healthyPort = null;
+    for (const port of candidatePorts) {
+      try {
+        await makeH2JsonCall(port, csrf, certPath, 'GetAvailableCascadePlugins', {}, 0, 2000);
+        healthyPort = port;
+        break;
+      } catch {
+        verboseLog(ctx, `⚠️ Swarm probe failed for PID=${proc.pid} port=${port} — trying next`);
+      }
     }
+    if (healthyPort === null) {
+      verboseLog(ctx, `⚠️ Swarm probe failed for PID=${proc.pid} ports=[${candidatePorts.join(',')}] — skipping`);
+      continue;
+    }
+    members.push({ pid: proc.pid, port: healthyPort, csrf, certPath });
   }
 
   log(
@@ -270,4 +302,5 @@ module.exports = {
   getQuotaBucket,
   markSwarmMemberExhausted,
   getSwarmCooldowns,
+  getSwarmCandidatePorts,
 };

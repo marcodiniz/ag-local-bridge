@@ -139,6 +139,10 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
       settle(reject, e);
     });
 
+    req.on('close', () => {
+      settle(reject, new Error(`H2 stream closed before response completed (${method})`));
+    });
+
     req.write(payload);
     req.end();
 
@@ -147,7 +151,12 @@ function _makeH2UnaryCallOnce(port, csrf, certPath, method, contentType, payload
         try {
           req.close(http2.constants.NGHTTP2_CANCEL);
         } catch {}
-        settle(reject, new Error('H2 timeout'));
+        settle(
+          reject,
+          new Error(
+            `H2 timeout: ${method} port=${port} status=${status ?? 'none'} bytes=${chunks.reduce((n, chunk) => n + chunk.length, 0)} elapsed=${timeoutMs}ms`,
+          ),
+        );
       }
     }, timeoutMs);
   });
