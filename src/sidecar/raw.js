@@ -124,13 +124,67 @@ function formatMessagesAsPrompt(messages, tools) {
  *
  * @returns {{ content: string, toolCalls: Array|null }}
  */
+function cleanJsonString(str) {
+  let inString = false;
+  let escaped = false;
+  let out = '';
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+
+    if (!inString) {
+      if (ch === '"') {
+        inString = true;
+        escaped = false;
+      }
+      out += ch;
+    } else {
+      if (escaped) {
+        out += ch;
+        escaped = false;
+      } else if (ch === '\\') {
+        out += ch;
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+        out += ch;
+      } else if (ch === '\n') {
+        out += '\\n';
+      } else if (ch === '\r') {
+        out += '\\r';
+      } else if (ch === '\t') {
+        out += '\\t';
+      } else if (ch.charCodeAt(0) < 32) {
+        out += ' ';
+      } else {
+        out += ch;
+      }
+    }
+  }
+  return out;
+}
+
+function repairJson(str) {
+  let cleaned = cleanJsonString(str);
+  cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
+  return cleaned;
+}
+
 function parseToolCalls(responseText) {
   const toolCalls = [];
 
   // ── Hallucination fence ─────────────────────────────────────────────────
-  // Only consider text before the first <observation> tag.
-  const firstObsIdx = responseText.search(/(?:<observation>|\[Tool Result:|<tool_response>)/i);
-  const parseText = firstObsIdx !== -1 ? responseText.substring(0, firstObsIdx) : responseText;
+  // Only consider text before the first <observation> tag AFTER thought closing tag.
+  let fenceSearchStart = 0;
+  const thoughtCloseMatch = responseText.match(/<\/(?:thought|thinking)>/i);
+  if (thoughtCloseMatch) {
+    fenceSearchStart = thoughtCloseMatch.index + thoughtCloseMatch[0].length;
+  }
+  const postThoughtText = responseText.substring(fenceSearchStart);
+  const postObsMatch = postThoughtText.search(/(?:<observation>|\[Tool Result:|<tool_response>)/i);
+  const parseText = postObsMatch !== -1
+    ? responseText.substring(0, fenceSearchStart + postObsMatch)
+    : responseText;
 
   // Find the index of the first tool call tag
   const firstToolMatch = parseText.match(/<(?:tool_call|minimax:tool_call|invoke|tool_use|function_calls)[\s>]/i);
@@ -139,20 +193,44 @@ function parseToolCalls(responseText) {
   let reasoning = null;
 
   // Parse 1: Custom JSON `<tool_call>` format
-  const toolCallRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/g;
+  const toolCallRegex = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)/g;
   let match;
   while ((match = toolCallRegex.exec(parseText)) !== null) {
     try {
-      const parsed = JSON.parse(match[1]);
-      toolCalls.push({
-        index: toolCalls.length,
-        id: `call_${Date.now()}_${toolCalls.length}`,
-        type: 'function',
-        function: {
-          name: parsed.name,
-          arguments: typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments || {}),
-        },
-      });
+      let rawMatch = match[1].trim();
+      if (rawMatch.startsWith('```')) {
+        rawMatch = rawMatch.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+      }
+      if (!rawMatch.startsWith('{')) {
+        const jsonStart = rawMatch.indexOf('{');
+        if (jsonStart !== -1) rawMatch = rawMatch.substring(jsonStart);
+      }
+      if (rawMatch.endsWith('```')) {
+        rawMatch = rawMatch.replace(/\s*```$/, '').trim();
+      }
+      if (!rawMatch) continue;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(rawMatch);
+      } catch {
+        parsed = JSON.parse(repairJson(rawMatch));
+      }
+
+      const fnName = parsed.name || (parsed.function && parsed.function.name) || parsed.tool_name;
+      const fnArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.function && parsed.function.arguments));
+
+      if (fnName) {
+        toolCalls.push({
+          index: toolCalls.length,
+          id: `call_${Date.now()}_${toolCalls.length}`,
+          type: 'function',
+          function: {
+            name: fnName,
+            arguments: typeof fnArgs === 'string' ? fnArgs : JSON.stringify(fnArgs || {}),
+          },
+        });
+      }
     } catch {
       // If JSON parsing fails, skip this tool call
     }
@@ -223,7 +301,7 @@ function parseToolCalls(responseText) {
   }
 
   // Remove tool blocks and thought blocks from the pre-fence text to get the pure conversational text.
-  let content = parseText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '');
+  let content = parseText.replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|$)/g, '');
   content = content.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
   content = content.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, ''); // Common wrapper
   content = content.replace(/<invoke>[\s\S]*?<\/invoke>/g, '');

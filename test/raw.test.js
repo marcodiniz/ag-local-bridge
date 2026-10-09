@@ -187,4 +187,41 @@ The weather should be nice.
     assert.equal(result.reasoning, null);
     assert.equal(result.toolCalls.length, 1);
   });
+
+  it('repairs unescaped newlines and control characters in tool call JSON strings', () => {
+    const rawWithNewlines =
+      '<thought>Creating a file</thought>\n' +
+      '<tool_call>{"name": "write_file", "arguments": {"path": "a.txt", "content": "line1\nline2\nline3"}}</tool_call>';
+    const result = parseToolCalls(rawWithNewlines);
+    assert.equal(result.reasoning, 'Creating a file');
+    assert.ok(result.toolCalls !== null);
+    assert.equal(result.toolCalls.length, 1);
+    assert.equal(result.toolCalls[0].function.name, 'write_file');
+    const parsedArgs = JSON.parse(result.toolCalls[0].function.arguments);
+    assert.equal(parsedArgs.content, 'line1\nline2\nline3');
+  });
+
+  it('repairs trailing commas and codeblock fences in tool_call JSON', () => {
+    const text =
+      '<tool_call>```json\n{"name": "test_tool", "arguments": {"a": 1, "b": 2,},}\n```</tool_call>';
+    const result = parseToolCalls(text);
+    assert.ok(result.toolCalls !== null);
+    assert.equal(result.toolCalls.length, 1);
+    assert.equal(result.toolCalls[0].function.name, 'test_tool');
+    const parsedArgs = JSON.parse(result.toolCalls[0].function.arguments);
+    assert.equal(parsedArgs.a, 1);
+    assert.equal(parsedArgs.b, 2);
+  });
+
+  it('does not trigger hallucination fence when thought block references [Tool Result:]', () => {
+    const text =
+      '<thought>Based on [Tool Result: search], we need to call read_file next.</thought>\n' +
+      '<tool_call>{"name": "read_file", "arguments": {"path": "found.js"}}</tool_call>';
+    const result = parseToolCalls(text);
+    assert.equal(result.reasoning, 'Based on [Tool Result: search], we need to call read_file next.');
+    assert.ok(result.toolCalls !== null);
+    assert.equal(result.toolCalls.length, 1);
+    assert.equal(result.toolCalls[0].function.name, 'read_file');
+  });
 });
+
