@@ -124,7 +124,7 @@ function formatMessagesAsPrompt(messages, tools) {
  *
  * @returns {{ content: string, toolCalls: Array|null }}
  */
-function cleanJsonString(str) {
+function repairJson(str) {
   let inString = false;
   let escaped = false;
   let out = '';
@@ -136,8 +136,19 @@ function cleanJsonString(str) {
       if (ch === '"') {
         inString = true;
         escaped = false;
+        out += ch;
+      } else if (ch === ',') {
+        let j = i + 1;
+        while (j < str.length && /\s/.test(str[j])) {
+          j++;
+        }
+        if (j < str.length && (str[j] === ']' || str[j] === '}')) {
+          continue;
+        }
+        out += ch;
+      } else {
+        out += ch;
       }
-      out += ch;
     } else {
       if (escaped) {
         out += ch;
@@ -164,27 +175,21 @@ function cleanJsonString(str) {
   return out;
 }
 
-function repairJson(str) {
-  let cleaned = cleanJsonString(str);
-  cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
-  return cleaned;
-}
-
 function parseToolCalls(responseText) {
   const toolCalls = [];
 
   // ── Hallucination fence ─────────────────────────────────────────────────
-  // Only consider text before the first <observation> tag AFTER thought closing tag.
+  // Only consider text before the first <observation> tag AFTER any initial thought closing tag.
   let fenceSearchStart = 0;
-  const thoughtCloseMatch = responseText.match(/<\/(?:thought|thinking)>/i);
-  if (thoughtCloseMatch) {
-    fenceSearchStart = thoughtCloseMatch.index + thoughtCloseMatch[0].length;
+  const obsPattern = /(?:<observation>|\[Tool Result:|<tool_response>)/i;
+  const firstRawObsIdx = responseText.search(obsPattern);
+  const initialThoughtMatch = responseText.match(/<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/i);
+  if (initialThoughtMatch && (firstRawObsIdx === -1 || initialThoughtMatch.index < firstRawObsIdx)) {
+    fenceSearchStart = initialThoughtMatch.index + initialThoughtMatch[0].length;
   }
   const postThoughtText = responseText.substring(fenceSearchStart);
-  const postObsMatch = postThoughtText.search(/(?:<observation>|\[Tool Result:|<tool_response>)/i);
-  const parseText = postObsMatch !== -1
-    ? responseText.substring(0, fenceSearchStart + postObsMatch)
-    : responseText;
+  const postObsMatch = postThoughtText.search(obsPattern);
+  const parseText = postObsMatch !== -1 ? responseText.substring(0, fenceSearchStart + postObsMatch) : responseText;
 
   // Find the index of the first tool call tag
   const firstToolMatch = parseText.match(/<(?:tool_call|minimax:tool_call|invoke|tool_use|function_calls)[\s>]/i);
@@ -199,7 +204,10 @@ function parseToolCalls(responseText) {
     try {
       let rawMatch = match[1].trim();
       if (rawMatch.startsWith('```')) {
-        rawMatch = rawMatch.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        rawMatch = rawMatch
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/\s*```$/, '')
+          .trim();
       }
       if (!rawMatch.startsWith('{')) {
         const jsonStart = rawMatch.indexOf('{');
@@ -218,7 +226,12 @@ function parseToolCalls(responseText) {
       }
 
       const fnName = parsed.name || (parsed.function && parsed.function.name) || parsed.tool_name;
-      const fnArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.function && parsed.function.arguments));
+      const fnArgs =
+        parsed.arguments !== undefined
+          ? parsed.arguments
+          : parsed.parameters !== undefined
+            ? parsed.parameters
+            : parsed.function && parsed.function.arguments;
 
       if (fnName) {
         toolCalls.push({
@@ -284,8 +297,8 @@ function parseToolCalls(responseText) {
   }
 
   // Extract reasoning:
-  // Case A: Closed <thought>...</thought> or <thinking>...</thinking> tag anywhere in response
-  const closedThoughtMatch = responseText.match(/<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/i);
+  // Case A: Closed <thought>...</thought> or <thinking>...</thinking> tag in pre-fence text
+  const closedThoughtMatch = parseText.match(/<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/i);
   if (closedThoughtMatch) {
     reasoning = closedThoughtMatch[1].trim() || null;
   } else if (firstToolIdx !== -1) {
