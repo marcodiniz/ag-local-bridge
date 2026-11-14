@@ -10,6 +10,16 @@ const { discoverSwarm, getNextSwarmMember, invalidateSwarmCache, markSwarmMember
 const { MODEL_ENUM_TO_VALUE } = require('../models');
 
 const RAW_MODEL_FALLBACKS = {
+  MODEL_PLACEHOLDER_M418: 'MODEL_PLACEHOLDER_M417', // 4 Argon Medium -> 4 Argon High
+  MODEL_PLACEHOLDER_M419: 'MODEL_PLACEHOLDER_M417', // 4 Argon Low -> 4 Argon High
+  MODEL_PLACEHOLDER_M526: 'MODEL_PLACEHOLDER_M525', // 4 Hydrogen Medium -> 4 Hydrogen High
+  MODEL_PLACEHOLDER_M527: 'MODEL_PLACEHOLDER_M525', // 4 Hydrogen Low -> 4 Hydrogen High
+  MODEL_PLACEHOLDER_M437: 'MODEL_PLACEHOLDER_M427', // 4 Carbon Medium -> 4 Carbon High
+  MODEL_PLACEHOLDER_M438: 'MODEL_PLACEHOLDER_M427', // 4 Carbon Low -> 4 Carbon High
+  MODEL_PLACEHOLDER_M401: 'MODEL_PLACEHOLDER_M402', // Claude Opus 5.5 Medium -> High
+  MODEL_PLACEHOLDER_M400: 'MODEL_PLACEHOLDER_M402', // Claude Opus 5.5 Low -> High
+  MODEL_PLACEHOLDER_M404: 'MODEL_PLACEHOLDER_M405', // Claude Sonnet 5.5 Medium -> High
+  MODEL_PLACEHOLDER_M403: 'MODEL_PLACEHOLDER_M405', // Claude Sonnet 5.5 Low -> High
   MODEL_PLACEHOLDER_M319: 'MODEL_PLACEHOLDER_M318', // 3.8 Flash Medium -> 3.8 Flash High
   MODEL_PLACEHOLDER_M320: 'MODEL_PLACEHOLDER_M318', // 3.8 Flash Low -> 3.8 Flash High
   MODEL_PLACEHOLDER_M299: 'MODEL_PLACEHOLDER_M298', // Flash Medium -> Flash High

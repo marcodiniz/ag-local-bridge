@@ -100,6 +100,24 @@ const commonProto = create(FileDescriptorProtoSchema, {
       MODEL_PLACEHOLDER_M36: 1036,
       MODEL_PLACEHOLDER_M16: 1016, // Pro High
       MODEL_PLACEHOLDER_M133: 1133, // Gemini 3.5 Flash High
+      MODEL_PLACEHOLDER_M400: 1400, // Claude Opus 5.5 Low
+      MODEL_PLACEHOLDER_M401: 1401, // Claude Opus 5.5 Medium
+      MODEL_PLACEHOLDER_M402: 1402, // Claude Opus 5.5 High
+      MODEL_PLACEHOLDER_M403: 1403, // Claude Sonnet 5.5 Low
+      MODEL_PLACEHOLDER_M404: 1404, // Claude Sonnet 5.5 Medium
+      MODEL_PLACEHOLDER_M405: 1405, // Claude Sonnet 5.5 High
+      MODEL_PLACEHOLDER_M417: 1417, // Gemini 4 Argon High
+      MODEL_PLACEHOLDER_M418: 1418, // Gemini 4 Argon Medium
+      MODEL_PLACEHOLDER_M419: 1419, // Gemini 4 Argon Low
+      MODEL_PLACEHOLDER_M427: 1427, // Gemini 4 Carbon High
+      MODEL_PLACEHOLDER_M437: 1437, // Gemini 4 Carbon Medium
+      MODEL_PLACEHOLDER_M438: 1438, // Gemini 4 Carbon Low
+      MODEL_PLACEHOLDER_M525: 1525, // Gemini 4 Hydrogen High
+      MODEL_PLACEHOLDER_M526: 1526, // Gemini 4 Hydrogen Medium
+      MODEL_PLACEHOLDER_M527: 1527, // Gemini 4 Hydrogen Low
+      MODEL_PLACEHOLDER_M528: 1528, // Gemini 4 Hydrogen XHigh
+      MODEL_PLACEHOLDER_M668: 1668, // Orchestrator (Argon)
+      MODEL_PLACEHOLDER_M670: 1670, // Gemini 4 Carbon
       MODEL_OPENAI_GPT_OSS_120B_MEDIUM: 342,
     }),
     makeEnum('ConversationalPlannerMode', {

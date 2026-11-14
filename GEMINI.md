@@ -148,7 +148,7 @@ When multiple sidecars are available (swarm mode), round-robins across them.
 - Formats OpenAI messages into a flat prompt string with role labels
 - Parses `<tool_call>{...}</tool_call>` blocks back into OpenAI `tool_calls` format
 - Timeout: **15 minutes** (LLM inference can be very slow)
-- Model enum values: `MODEL_PLACEHOLDER_M318` (Gemini 3.8 Flash High), `MODEL_PLACEHOLDER_M319` (Gemini 3.8 Flash Medium), `MODEL_PLACEHOLDER_M320` (Gemini 3.8 Flash Low), `MODEL_PLACEHOLDER_M298` (Gemini 3.7 Flash High), `MODEL_PLACEHOLDER_M299` (Gemini 3.7 Flash Medium), `MODEL_PLACEHOLDER_M300` (Gemini 3.7 Flash Low), `MODEL_PLACEHOLDER_M71` (Gemini 3.6 Flash High), `MODEL_PLACEHOLDER_M72` (Gemini 3.6 Flash Medium), `MODEL_PLACEHOLDER_M73` (Gemini 3.6 Flash Low), `MODEL_PLACEHOLDER_M84` (Gemini 3.5 Flash High), `MODEL_PLACEHOLDER_M20` (Gemini 3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (Gemini 3.5 Flash Low), `MODEL_PLACEHOLDER_M18` (Gemini 3 Flash), `MODEL_PLACEHOLDER_M16` (Gemini 3.1 Pro High), `MODEL_PLACEHOLDER_M36` (Gemini 3.1 Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet 4.6), `MODEL_PLACEHOLDER_M26` (Opus 4.6), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
+- Model enum values: `MODEL_PLACEHOLDER_M417`/`M418`/`M419` (Gemini 4 Argon High/Medium/Low), `MODEL_PLACEHOLDER_M528`/`M525`/`M526`/`M527` (Gemini 4 Hydrogen XHigh/High/Medium/Low), `MODEL_PLACEHOLDER_M427`/`M437`/`M438`/`M670` (Gemini 4 Carbon High/Medium/Low/Default), `MODEL_PLACEHOLDER_M668` (Orchestrator Argon), `MODEL_PLACEHOLDER_M318` (Gemini 3.8 Flash High), `MODEL_PLACEHOLDER_M319` (Gemini 3.8 Flash Medium), `MODEL_PLACEHOLDER_M320` (Gemini 3.8 Flash Low), `MODEL_PLACEHOLDER_M298` (Gemini 3.7 Flash High), `MODEL_PLACEHOLDER_M299` (Gemini 3.7 Flash Medium), `MODEL_PLACEHOLDER_M300` (Gemini 3.7 Flash Low), `MODEL_PLACEHOLDER_M71` (Gemini 3.6 Flash High), `MODEL_PLACEHOLDER_M72` (Gemini 3.6 Flash Medium), `MODEL_PLACEHOLDER_M73` (Gemini 3.6 Flash Low), `MODEL_PLACEHOLDER_M84` (Gemini 3.5 Flash High), `MODEL_PLACEHOLDER_M20` (Gemini 3.5 Flash Medium), `MODEL_PLACEHOLDER_M187` (Gemini 3.5 Flash Low), `MODEL_PLACEHOLDER_M18` (Gemini 3 Flash), `MODEL_PLACEHOLDER_M16` (Gemini 3.1 Pro High), `MODEL_PLACEHOLDER_M36` (Gemini 3.1 Pro Low), `MODEL_PLACEHOLDER_M35` (Sonnet 4.6), `MODEL_PLACEHOLDER_M26` (Opus 4.6), `MODEL_PLACEHOLDER_M400`/`M401`/`M402` (Claude Opus 5.5 Low/Medium/High), `MODEL_PLACEHOLDER_M403`/`M404`/`M405` (Claude Sonnet 5.5 Low/Medium/High), `MODEL_OPENAI_GPT_OSS_120B_MEDIUM` (GPT-OSS 120B)
 - Dynamic discovery: The authoritative label ↔ enum-name table is queried live from the sidecar via the `GetCascadeModelConfigData` RPC.
 - **Auth re-discovery**: On `PERMISSION_DENIED` / `401` / `403` in the raw response body,
 
@@ -251,39 +251,61 @@ convert the request/response format.
 `src/models.js` supports both the full `antigravity-*` prefixed IDs (shown in `/v1/models`)
 and short-form aliases (hidden from model list) for compatibility with other tools:
 
-| Short alias                    | Full ID                                | Enum value |
-| ------------------------------ | -------------------------------------- | ---------- |
-| `gemini-3.8-flash-high`        | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `gemini-3.8-flash-medium`      | `antigravity-gemini-3.8-flash-medium`  | 1319       |
-| `gemini-3.8-flash-low`         | `antigravity-gemini-3.8-flash-low`     | 1320       |
-| `gemini-3.8-flash`             | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `gemini-3.8`                   | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `gemini-3.8-thinking`          | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `gemini-3.8-flash-thinking`    | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `antigravity-gemini-3.8`       | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `antigravity-gemini-3.8-flash` | `antigravity-gemini-3.8-flash-high`    | 1318       |
-| `gemini-3.7-flash-high`        | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `gemini-3.7-flash-medium`      | `antigravity-gemini-3.7-flash-medium`  | 1299       |
-| `gemini-3.7-flash-low`         | `antigravity-gemini-3.7-flash-low`     | 1300       |
-| `gemini-3.7-flash`             | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `gemini-3.7`                   | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `gemini-3.7-thinking`          | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `gemini-3.7-flash-thinking`    | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `antigravity-gemini-3.7`       | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `antigravity-gemini-3.7-flash` | `antigravity-gemini-3.7-flash-high`    | 1298       |
-| `gemini-3.6-flash-high`        | `antigravity-gemini-3.6-flash-high`    | 1071       |
-| `gemini-3.6-flash-medium`      | `antigravity-gemini-3.6-flash-medium`  | 1072       |
-| `gemini-3.6-flash-low`         | `antigravity-gemini-3.6-flash-low`     | 1073       |
-| `gemini-3.6-flash`             | `antigravity-gemini-3.6-flash-high`    | 1071       |
-| `gemini-3.5-flash-high`        | `antigravity-gemini-3.5-flash-high`    | 1084       |
-| `gemini-3.5-flash-medium`      | `antigravity-gemini-3.5-flash-medium`  | 1020       |
-| `gemini-3.5-flash-low`         | `antigravity-gemini-3.5-flash-low`     | 1187       |
-| `gemini-3.5-flash`             | `antigravity-gemini-3.5-flash-high`    | 1084       |
-| `gemini-3-flash-agent`         | `antigravity-gemini-3-flash`           | 1018       |
-| `gemini-3.1-pro-high`          | `antigravity-gemini-3.1-pro-high`      | 1037       |
-| `gemini-3.1-pro-low`           | `antigravity-gemini-3.1-pro-low`       | 1036       |
-| `gemini-3.1-pro`               | `antigravity-gemini-3.1-pro-high`      | 1037       |
-| `gemini-pro-agent`             | `antigravity-gemini-3.1-pro-high`      | 1037       |
-| `claude-sonnet-4-6`            | `antigravity-claude-sonnet-4-6`        | 1035       |
-| `claude-opus-4-6-thinking`     | `antigravity-claude-opus-4-6-thinking` | 1026       |
-| `gpt-oss-120b-medium`          | `antigravity-gpt-oss-120b`             | 342        |
+| Short alias                      | Full ID                                      | Enum value |
+| -------------------------------- | -------------------------------------------- | ---------- |
+| `gemini-4-argon-high`            | `antigravity-gemini-4-argon-high`            | 1417       |
+| `gemini-4-argon-medium`          | `antigravity-gemini-4-argon-medium`          | 1418       |
+| `gemini-4-argon-low`             | `antigravity-gemini-4-argon-low`             | 1419       |
+| `gemini-4-argon`                 | `antigravity-gemini-4-argon-high`            | 1417       |
+| `gemini-4-hydrogen-xhigh`        | `antigravity-gemini-4-hydrogen-xhigh`        | 1528       |
+| `gemini-4-hydrogen-high`         | `antigravity-gemini-4-hydrogen-high`         | 1525       |
+| `gemini-4-hydrogen-medium`       | `antigravity-gemini-4-hydrogen-medium`       | 1526       |
+| `gemini-4-hydrogen-low`          | `antigravity-gemini-4-hydrogen-low`          | 1527       |
+| `gemini-4-hydrogen`              | `antigravity-gemini-4-hydrogen-high`         | 1525       |
+| `gemini-4-carbon-high`           | `antigravity-gemini-4-carbon-high`           | 1427       |
+| `gemini-4-carbon-medium`         | `antigravity-gemini-4-carbon-medium`         | 1437       |
+| `gemini-4-carbon-low`            | `antigravity-gemini-4-carbon-low`            | 1438       |
+| `gemini-4-carbon`                | `antigravity-gemini-4-carbon`                | 1670       |
+| `gemini-pro-orchestrator-g1-pro` | `antigravity-gemini-pro-orchestrator-g1-pro` | 1668       |
+| `gemini-3.8-flash-high`          | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `gemini-3.8-flash-medium`        | `antigravity-gemini-3.8-flash-medium`        | 1319       |
+| `gemini-3.8-flash-low`           | `antigravity-gemini-3.8-flash-low`           | 1320       |
+| `gemini-3.8-flash`               | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `gemini-3.8`                     | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `gemini-3.8-thinking`            | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `gemini-3.8-flash-thinking`      | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `antigravity-gemini-3.8`         | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `antigravity-gemini-3.8-flash`   | `antigravity-gemini-3.8-flash-high`          | 1318       |
+| `gemini-3.7-flash-high`          | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `gemini-3.7-flash-medium`        | `antigravity-gemini-3.7-flash-medium`        | 1299       |
+| `gemini-3.7-flash-low`           | `antigravity-gemini-3.7-flash-low`           | 1300       |
+| `gemini-3.7-flash`               | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `gemini-3.7`                     | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `gemini-3.7-thinking`            | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `gemini-3.7-flash-thinking`      | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `antigravity-gemini-3.7`         | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `antigravity-gemini-3.7-flash`   | `antigravity-gemini-3.7-flash-high`          | 1298       |
+| `gemini-3.6-flash-high`          | `antigravity-gemini-3.6-flash-high`          | 1071       |
+| `gemini-3.6-flash-medium`        | `antigravity-gemini-3.6-flash-medium`        | 1072       |
+| `gemini-3.6-flash-low`           | `antigravity-gemini-3.6-flash-low`           | 1073       |
+| `gemini-3.6-flash`               | `antigravity-gemini-3.6-flash-high`          | 1071       |
+| `gemini-3.5-flash-high`          | `antigravity-gemini-3.5-flash-high`          | 1084       |
+| `gemini-3.5-flash-medium`        | `antigravity-gemini-3.5-flash-medium`        | 1020       |
+| `gemini-3.5-flash-low`           | `antigravity-gemini-3.5-flash-low`           | 1187       |
+| `gemini-3.5-flash`               | `antigravity-gemini-3.5-flash-high`          | 1084       |
+| `gemini-3-flash-agent`           | `antigravity-gemini-3-flash`                 | 1018       |
+| `gemini-3.1-pro-high`            | `antigravity-gemini-3.1-pro-high`            | 1037       |
+| `gemini-3.1-pro-low`             | `antigravity-gemini-3.1-pro-low`             | 1036       |
+| `gemini-3.1-pro`                 | `antigravity-gemini-3.1-pro-high`            | 1037       |
+| `gemini-pro-agent`               | `antigravity-gemini-3.1-pro-high`            | 1037       |
+| `claude-sonnet-4-6`              | `antigravity-claude-sonnet-4-6`              | 1035       |
+| `claude-opus-4-6-thinking`       | `antigravity-claude-opus-4-6-thinking`       | 1026       |
+| `claude-opus-5-5-high`           | `antigravity-claude-opus-5-5-high`           | 1402       |
+| `claude-opus-5-5-medium`         | `antigravity-claude-opus-5-5-medium`         | 1401       |
+| `claude-opus-5-5-low`            | `antigravity-claude-opus-5-5-low`            | 1400       |
+| `claude-opus-5-5`                | `antigravity-claude-opus-5-5-high`           | 1402       |
+| `claude-sonnet-5-5-high`         | `antigravity-claude-sonnet-5-5-high`         | 1405       |
+| `claude-sonnet-5-5-medium`       | `antigravity-claude-sonnet-5-5-medium`       | 1404       |
+| `claude-sonnet-5-5-low`          | `antigravity-claude-sonnet-5-5-low`          | 1403       |
+| `claude-sonnet-5-5`              | `antigravity-claude-sonnet-5-5-high`         | 1405       |
+| `gpt-oss-120b-medium`            | `antigravity-gpt-oss-120b`                   | 342        |

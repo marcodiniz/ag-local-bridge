@@ -32,26 +32,44 @@ The extension runs inside Antigravity's VS Code process, discovers the sidecar v
 
 ## Available Models
 
-| Model ID                               | Description                                   |
-| -------------------------------------- | --------------------------------------------- |
-| `antigravity-claude-sonnet-4-6`        | Claude Sonnet 4.6 with Thinking **(default)** |
-| `antigravity-claude-opus-4-6-thinking` | Claude Opus 4.6 with Thinking                 |
-| `antigravity-gemini-3.8-flash-high`    | Gemini 3.8 Flash — High thinking              |
-| `antigravity-gemini-3.8-flash-medium`  | Gemini 3.8 Flash — Medium thinking            |
-| `antigravity-gemini-3.8-flash-low`     | Gemini 3.8 Flash — Low thinking               |
-| `antigravity-gemini-3.7-flash-high`    | Gemini 3.7 Flash — High thinking              |
-| `antigravity-gemini-3.7-flash-medium`  | Gemini 3.7 Flash — Medium thinking            |
-| `antigravity-gemini-3.7-flash-low`     | Gemini 3.7 Flash — Low thinking               |
-| `antigravity-gemini-3.6-flash-high`    | Gemini 3.6 Flash — High thinking              |
-| `antigravity-gemini-3.6-flash-medium`  | Gemini 3.6 Flash — Medium thinking            |
-| `antigravity-gemini-3.6-flash-low`     | Gemini 3.6 Flash — Low thinking               |
-| `antigravity-gemini-3.5-flash`         | Gemini 3.5 Flash — High thinking              |
-| `antigravity-gemini-3.5-flash-medium`  | Gemini 3.5 Flash — Medium thinking            |
-| `antigravity-gemini-3.5-flash-low`     | Gemini 3.5 Flash — Low thinking               |
-| `antigravity-gemini-3-flash`           | Gemini 3 Flash                                |
-| `antigravity-gemini-3.1-pro-high`      | Gemini 3.1 Pro — High thinking                |
-| `antigravity-gemini-3.1-pro-low`       | Gemini 3.1 Pro — Low thinking                 |
-| `antigravity-gpt-oss-120b`             | GPT-OSS 120B Medium                           |
+| Model ID                                     | Description                                   |
+| -------------------------------------------- | --------------------------------------------- |
+| `antigravity-claude-sonnet-4-6`              | Claude Sonnet 4.6 with Thinking **(default)** |
+| `antigravity-claude-opus-4-6-thinking`       | Claude Opus 4.6 with Thinking                 |
+| `antigravity-claude-opus-5-5-high`           | Claude Opus 5.5 — High thinking               |
+| `antigravity-claude-opus-5-5-medium`         | Claude Opus 5.5 — Medium thinking             |
+| `antigravity-claude-opus-5-5-low`            | Claude Opus 5.5 — Low thinking                |
+| `antigravity-claude-sonnet-5-5-high`         | Claude Sonnet 5.5 — High thinking             |
+| `antigravity-claude-sonnet-5-5-medium`       | Claude Sonnet 5.5 — Medium thinking           |
+| `antigravity-claude-sonnet-5-5-low`          | Claude Sonnet 5.5 — Low thinking              |
+| `antigravity-gemini-4-argon-high`            | Gemini 4 Argon — High thinking                |
+| `antigravity-gemini-4-argon-medium`          | Gemini 4 Argon — Medium thinking              |
+| `antigravity-gemini-4-argon-low`             | Gemini 4 Argon — Low thinking                 |
+| `antigravity-gemini-4-hydrogen-xhigh`        | Gemini 4 Hydrogen — XHigh thinking            |
+| `antigravity-gemini-4-hydrogen-high`         | Gemini 4 Hydrogen — High thinking             |
+| `antigravity-gemini-4-hydrogen-medium`       | Gemini 4 Hydrogen — Medium thinking           |
+| `antigravity-gemini-4-hydrogen-low`          | Gemini 4 Hydrogen — Low thinking              |
+| `antigravity-gemini-4-carbon-high`           | Gemini 4 Carbon — High thinking               |
+| `antigravity-gemini-4-carbon-medium`         | Gemini 4 Carbon — Medium thinking             |
+| `antigravity-gemini-4-carbon-low`            | Gemini 4 Carbon — Low thinking                |
+| `antigravity-gemini-4-carbon`                | Gemini 4 Carbon                               |
+| `antigravity-gemini-pro-orchestrator-g1-pro` | Orchestrator (Argon)                          |
+| `antigravity-gemini-3.8-flash-high`          | Gemini 3.8 Flash — High thinking              |
+| `antigravity-gemini-3.8-flash-medium`        | Gemini 3.8 Flash — Medium thinking            |
+| `antigravity-gemini-3.8-flash-low`           | Gemini 3.8 Flash — Low thinking               |
+| `antigravity-gemini-3.7-flash-high`          | Gemini 3.7 Flash — High thinking              |
+| `antigravity-gemini-3.7-flash-medium`        | Gemini 3.7 Flash — Medium thinking            |
+| `antigravity-gemini-3.7-flash-low`           | Gemini 3.7 Flash — Low thinking               |
+| `antigravity-gemini-3.6-flash-high`          | Gemini 3.6 Flash — High thinking              |
+| `antigravity-gemini-3.6-flash-medium`        | Gemini 3.6 Flash — Medium thinking            |
+| `antigravity-gemini-3.6-flash-low`           | Gemini 3.6 Flash — Low thinking               |
+| `antigravity-gemini-3.5-flash`               | Gemini 3.5 Flash — High thinking              |
+| `antigravity-gemini-3.5-flash-medium`        | Gemini 3.5 Flash — Medium thinking            |
+| `antigravity-gemini-3.5-flash-low`           | Gemini 3.5 Flash — Low thinking               |
+| `antigravity-gemini-3-flash`                 | Gemini 3 Flash                                |
+| `antigravity-gemini-3.1-pro-high`            | Gemini 3.1 Pro — High thinking                |
+| `antigravity-gemini-3.1-pro-low`             | Gemini 3.1 Pro — Low thinking                 |
+| `antigravity-gpt-oss-120b`                   | GPT-OSS 120B Medium                           |
 
 > **Short aliases**: All models can also be referenced with intuitive short names like `gemini-3.8`, `gemini-3.8-flash`, `gemini-3.7`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
 
